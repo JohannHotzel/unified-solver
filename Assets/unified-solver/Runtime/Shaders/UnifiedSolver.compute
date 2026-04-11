@@ -113,6 +113,8 @@ float  _CellSize;
 uint   _TableSize;
 float  _FrictionStatic;   // mu_s — Coulomb static  threshold (tangential / normal)
 float  _FrictionKinetic;  // mu_k — Coulomb kinetic scale     (tangential / normal, <= mu_s)
+float  _MaxDepenetrationSpeed;  // Clamp per-substep contact correction (Small Steps paper Eq. 10)
+
 // Fixed-point precision. Must match SolverData.FP_SCALE.
 static const float FP_SCALE = 100000.0;
 static const float FP_INV   = 1.0 / FP_SCALE;
@@ -602,6 +604,13 @@ void SolveContact(uint3 id : SV_DispatchThreadID)
                     float  dist        = sqrt(dist2);
                     float3 n           = delta / dist;
                     float  penetration = minD - dist;
+
+                    // Clamp correction per substep so that the resulting
+                    // velocity stays bounded (Small Steps paper Eq. 10).
+                    // Deep overlaps are resolved gradually over multiple
+                    // substeps/frames instead of in one explosive step.
+                    float maxCorr = _MaxDepenetrationSpeed * _DeltaTime;
+                    penetration = min(penetration, maxCorr);
 
                     float wSum = pi.invMass + pj.invMass;
                     if (wSum > 0.0)

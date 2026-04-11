@@ -59,6 +59,10 @@ public class SolverManager : MonoBehaviour
     [Tooltip("Kinetic friction (mu_k): caps tangential correction at mu_k * penetration. Keep <= mu_s.")]
     [Range(0f, 2f)] public float frictionKinetic = 0.2f;
 
+    [Header("Contact")]
+    [Tooltip("Max depenetration speed (m/s). Limits how fast overlapping particles separate per substep to prevent velocity explosions. Lower = gentler separation, higher = snappier but can explode.")]
+    public float maxDepenetrationSpeed = 5f;
+
     // GPU buffers
     ComputeBuffer _particleBuffer;
     ComputeBuffer _constraintBuffer;
@@ -478,6 +482,7 @@ public class SolverManager : MonoBehaviour
         computeShader.SetInt("_TableSize",         tableSize);
         computeShader.SetFloat("_FrictionStatic",  frictionStatic);
         computeShader.SetFloat("_FrictionKinetic", frictionKinetic);
+        computeShader.SetFloat("_MaxDepenetrationSpeed", maxDepenetrationSpeed);
 
         // Build the spatial hash once per frame from the current
         // (pre-substep) positions. The contact set is reused across
