@@ -29,15 +29,14 @@ Shader "UnifiedSolver/ConstraintRenderer"
 
             // ---- GPU structs (must match SolverData.cs byte-for-byte) ----
 
-            struct Particle                  // 60 bytes
+            struct Particle                  // 56 bytes
             {
                 float3 position;            // offset  0
                 float3 velocity;            // offset 12
                 float3 prevPosition;        // offset 24
                 float  invMass;             // offset 36
-                float  radius;              // offset 40
-                int    phase;               // offset 44
-                float3 color;               // offset 48
+                int    phase;               // offset 40
+                float3 color;               // offset 44
             };
 
             struct DistanceConstraint       // 24 bytes

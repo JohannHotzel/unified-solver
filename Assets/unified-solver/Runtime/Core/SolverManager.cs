@@ -30,8 +30,8 @@ public class SolverManager : MonoBehaviour
     public float damping = 0f;
 
     [Header("Particles")]
-    [Tooltip("Default radius assigned by AddParticle when callers do not specify one.")]
-    public float defaultRadius = 0.1f;
+    [Tooltip("Global particle radius shared by every particle (Flex paper, section 3).")]
+    public float particleRadius = 0.1f;
     [Tooltip("Default mass assigned by AddParticle when callers do not specify one.")]
     public float defaultMass = 1f;
     [Tooltip("Maximum particle capacity of the GPU buffer. Picking too low truncates spawned particles.")]
@@ -180,7 +180,7 @@ public class SolverManager : MonoBehaviour
     // Public API — particles
     // ─────────────────────────────────────────────
 
-    public int AddParticle(Vector3 position, Vector3 velocity, float mass, float radius, Color color, int phase = PhaseManager.PhaseNone)
+    public int AddParticle(Vector3 position, Vector3 velocity, float mass, Color color, int phase = PhaseManager.PhaseNone)
     {
         if (_activeCount >= maxParticles)
         {
@@ -194,7 +194,6 @@ public class SolverManager : MonoBehaviour
             velocity     = velocity,
             prevPosition = position,
             invMass      = mass > 0 ? 1f / mass : 0f,
-            radius       = radius,
             phase        = phase,
             color        = new Vector3(color.r, color.g, color.b)
         };
@@ -483,6 +482,7 @@ public class SolverManager : MonoBehaviour
         computeShader.SetFloat("_FrictionStatic",  frictionStatic);
         computeShader.SetFloat("_FrictionKinetic", frictionKinetic);
         computeShader.SetFloat("_MaxDepenetrationSpeed", maxDepenetrationSpeed);
+        computeShader.SetFloat("_ParticleRadius", particleRadius);
 
         // Build the spatial hash once per frame from the current
         // (pre-substep) positions. The contact set is reused across

@@ -33,7 +33,6 @@ struct Particle
     float3 velocity;
     float3 prevPosition;
     float  invMass;
-    float  radius;
     int    phase;
     float3 color;
 };
@@ -114,6 +113,7 @@ uint   _TableSize;
 float  _FrictionStatic;   // mu_s — Coulomb static  threshold (tangential / normal)
 float  _FrictionKinetic;  // mu_k — Coulomb kinetic scale     (tangential / normal, <= mu_s)
 float  _MaxDepenetrationSpeed;  // Clamp per-substep contact correction (Small Steps paper Eq. 10)
+float  _ParticleRadius;         // Global radius for all particles (Flex paper, section 3)
 
 // Fixed-point precision. Must match SolverData.FP_SCALE.
 static const float FP_SCALE = 100000.0;
@@ -148,7 +148,7 @@ void SolveGround(uint3 id : SV_DispatchThreadID)
     Particle p = _Particles[id.x];
     if (p.invMass == 0.0) return;
 
-    float minY = _GroundY + p.radius;
+    float minY = _GroundY + _ParticleRadius;
     if (p.position.y < minY)
     {
         float penetration = minY - p.position.y;
@@ -335,7 +335,7 @@ void SolveSphere(uint3 id : SV_DispatchThreadID)
         SphereCollider sc = _SphereColliders[i];
         float3 diff = p.position - sc.center;
         float  dist = length(diff);
-        float  minDist = sc.radius + p.radius;
+        float  minDist = sc.radius + _ParticleRadius;
 
         if (dist < minDist && dist > 1e-7)
         {
@@ -402,7 +402,7 @@ void SolveCapsule(uint3 id : SV_DispatchThreadID)
 
         float3 diff    = p.position - closest;
         float  dist    = length(diff);
-        float  minDist = cc.radius + p.radius;
+        float  minDist = cc.radius + _ParticleRadius;
 
         if (dist < minDist && dist > 1e-7)
         {
@@ -467,12 +467,12 @@ void SolveBox(uint3 id : SV_DispatchThreadID)
         if (dist > 1e-7)
         {
             // Particle center is outside the box
-            if (dist >= p.radius) continue;
+            if (dist >= _ParticleRadius) continue;
 
             float3 nLocal = diffLocal / dist;
             n = nLocal.x * bc.axisX + nLocal.y * bc.axisY + nLocal.z * bc.axisZ;
             closest = bc.center + clamped.x * bc.axisX + clamped.y * bc.axisY + clamped.z * bc.axisZ;
-            penetration = p.radius - dist;
+            penetration = _ParticleRadius - dist;
         }
         else
         {
@@ -489,7 +489,7 @@ void SolveBox(uint3 id : SV_DispatchThreadID)
 
             float minFaceDist = min(distToFace.x, min(distToFace.y, distToFace.z));
             n = nLocal.x * bc.axisX + nLocal.y * bc.axisY + nLocal.z * bc.axisZ;
-            penetration = p.radius + minFaceDist;
+            penetration = _ParticleRadius + minFaceDist;
 
             float3 faceLocal = local + nLocal * minFaceDist;
             closest = bc.center + faceLocal.x * bc.axisX + faceLocal.y * bc.axisY + faceLocal.z * bc.axisZ;
@@ -497,12 +497,12 @@ void SolveBox(uint3 id : SV_DispatchThreadID)
 
         float3 dx = p.position - p.prevPosition;
 
-        p.position = closest + n * p.radius;
+        p.position = closest + n * _ParticleRadius;
 
         float3 prevDiff = p.prevPosition - closest;
         float  prevProj = dot(prevDiff, n);
-        if (prevProj < p.radius)
-            p.prevPosition += (p.radius - prevProj) * n;
+        if (prevProj < _ParticleRadius)
+            p.prevPosition += (_ParticleRadius - prevProj) * n;
 
         float3 dx_t = dx - dot(dx, n) * n;
         float  len  = length(dx_t);
@@ -597,7 +597,7 @@ void SolveContact(uint3 id : SV_DispatchThreadID)
                 Particle pj    = _Particles[j];
                 float3   delta = pi.position - pj.position;
                 float    dist2 = dot(delta, delta);
-                float    minD  = pi.radius + pj.radius;
+                float    minD  = _ParticleRadius + _ParticleRadius;
 
                 if (dist2 < minD * minD && dist2 > 1e-10)
                 {

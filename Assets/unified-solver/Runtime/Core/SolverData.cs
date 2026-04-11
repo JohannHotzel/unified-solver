@@ -11,7 +11,7 @@ public static class SolverData
     public const float FP_SCALE = 100000.0f;
 
     // GPU buffer strides (bytes)
-    public const int ParticleStride            = 60; // 3*Vec3 + float + float + int + Vec3
+    public const int ParticleStride            = 56; // 3*Vec3 + float + int + Vec3
     public const int DistanceConstraintStride  = 24; // 2*int + 4*float
     public const int SphereColliderStride      = 16; // Vec3 + float
     public const int CapsuleColliderStride     = 32; // Vec3 + float + Vec3 + float
@@ -20,14 +20,15 @@ public static class SolverData
     public const int IntStride                 = 4;
 }
 
-// Particle GPU layout — 60 bytes.
+// Particle GPU layout — 56 bytes.
+// Radius is a global uniform (_ParticleRadius) shared by all particles,
+// as per Macklin et al. 2014, section 3: fixed particle radius per scene.
 public struct ParticleGPU
 {
     public Vector3 position;
     public Vector3 velocity;
     public Vector3 prevPosition;
     public float   invMass;
-    public float   radius;
     public int     phase;
     public Vector3 color;
 }

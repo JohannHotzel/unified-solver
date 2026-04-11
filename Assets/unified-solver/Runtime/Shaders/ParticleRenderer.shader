@@ -20,12 +20,12 @@ Shader "UnifiedSolver/ParticleRenderer"
                 float3 velocity;
                 float3 prevPosition;
                 float  invMass;
-                float  radius;
                 int    phase;
                 float3 color;
             };
 
             StructuredBuffer<Particle> _Particles;
+            float _ParticleRadius;
 
             struct appdata
             {
@@ -45,7 +45,7 @@ Shader "UnifiedSolver/ParticleRenderer"
                 v2f o;
                 Particle p = _Particles[instanceID];
 
-                float3 worldPos = v.vertex.xyz * (p.radius * 2.0) + p.position;
+                float3 worldPos = v.vertex.xyz * (_ParticleRadius * 2.0) + p.position;
                 o.pos    = UnityWorldToClipPos(float4(worldPos, 1.0));
                 o.normal = v.normal;
                 o.color  = p.color;
@@ -83,12 +83,12 @@ Shader "UnifiedSolver/ParticleRenderer"
                 float3 velocity;
                 float3 prevPosition;
                 float  invMass;
-                float  radius;
                 int    phase;
                 float3 color;
             };
 
             StructuredBuffer<Particle> _Particles;
+            float _ParticleRadius;
 
             struct v2f { V2F_SHADOW_CASTER; };
 
@@ -98,7 +98,7 @@ Shader "UnifiedSolver/ParticleRenderer"
                 // DrawMeshInstancedProcedural has no model matrix, so world == object space.
                 // Place world-space position directly into v.vertex and let the standard
                 // shadow caster macros project it.
-                v.vertex = float4(v.vertex.xyz * (p.radius * 2.0) + p.position, 1.0);
+                v.vertex = float4(v.vertex.xyz * (_ParticleRadius * 2.0) + p.position, 1.0);
                 v2f o;
                 TRANSFER_SHADOW_CASTER_NORMALOFFSET(o)
                 return o;

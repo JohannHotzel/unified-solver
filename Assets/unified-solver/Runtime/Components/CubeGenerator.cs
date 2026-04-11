@@ -12,7 +12,6 @@ public class CubeGenerator : MonoBehaviour
 
     [Header("Particle Settings")]
     public float spacing = 0.25f;
-    public float particleRadius = 0.1f;
     public float particleMass = 1f;
     public Color particleColor = new Color(0.3f, 0.6f, 1.0f);
     [Range(0f, 1f)] public float colorVariation = 0.15f;
@@ -73,7 +72,7 @@ public class CubeGenerator : MonoBehaviour
                     Vector3 pos = origin + rot * localPos;
                     bool isFixed = (fixBottomRow && y == 0) || (fixTopRow && y == countY - 1);
                     float mass = isFixed ? 0f : particleMass;
-                    int idx = manager.AddParticle(pos, Vector3.zero, mass, particleRadius, VariedColor());
+                    int idx = manager.AddParticle(pos, Vector3.zero, mass, VariedColor());
                     _particleIndices[x, y, z] = idx;
                 }
             }

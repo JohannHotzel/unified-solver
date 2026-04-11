@@ -28,6 +28,7 @@ public class ParticleRenderer : MonoBehaviour
         if (particleMaterial == null || particleMesh == null) return;
 
         particleMaterial.SetBuffer("_Particles", _manager.ParticleBuffer);
+        particleMaterial.SetFloat("_ParticleRadius", _manager.particleRadius);
 
         var bounds = new Bounds(Vector3.zero, Vector3.one * 1000f);
 

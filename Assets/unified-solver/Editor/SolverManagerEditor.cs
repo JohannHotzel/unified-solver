@@ -40,11 +40,11 @@ public class SolverManagerEditor : Editor
 
         // cellSize must be >= 2 * largest particle radius for the spatial
         // hash to find every potential pair in the 3x3x3 neighborhood.
-        float minCellSize = 2f * mgr.defaultRadius;
+        float minCellSize = 2f * mgr.particleRadius;
         if (mgr.cellSize < minCellSize)
         {
             EditorGUILayout.HelpBox(
-                $"Cell size ({mgr.cellSize:F3}) is below 2 * defaultRadius ({minCellSize:F3}). " +
+                $"Cell size ({mgr.cellSize:F3}) is below 2 * particleRadius ({minCellSize:F3}). " +
                 "Spatial hash may miss collision pairs.",
                 MessageType.Warning);
         }
