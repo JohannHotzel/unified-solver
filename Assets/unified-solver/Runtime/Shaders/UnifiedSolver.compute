@@ -594,7 +594,17 @@ void SolveContact(uint3 id : SV_DispatchThreadID)
         {
             if ((uint)j != i)
             {
-                Particle pj    = _Particles[j];
+                Particle pj = _Particles[j];
+
+                // Phase system (Macklin et al. 2014, section 3/5): particles
+                // sharing the same non-zero phase belong to the same body and
+                // skip mutual collision entirely.
+                if (pi.phase != 0 && pi.phase == pj.phase)
+                {
+                    j = _HashNext[j];
+                    continue;
+                }
+
                 float3   delta = pi.position - pj.position;
                 float    dist2 = dot(delta, delta);
                 float    minD  = _ParticleRadius + _ParticleRadius;

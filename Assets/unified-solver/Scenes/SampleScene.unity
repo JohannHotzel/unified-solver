@@ -202,8 +202,8 @@ Camera:
   m_GameObject: {fileID: 330585543}
   m_Enabled: 1
   serializedVersion: 2
-  m_ClearFlags: 1
-  m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0}
+  m_ClearFlags: 2
+  m_BackGroundColor: {r: 0.20125782, g: 0.20125782, b: 0.20125782, a: 0}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
   m_FOVAxisMode: 0
@@ -303,6 +303,65 @@ MonoBehaviour:
     m_MipBias: 0
     m_VarianceClampScale: 0.9
     m_ContrastAdaptiveSharpening: 0
+--- !u!1 &331373539
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 331373541}
+  - component: {fileID: 331373540}
+  m_Layer: 0
+  m_Name: cube-generator (1)
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &331373540
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 331373539}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4a9609dd3c1e78243bb1f72d19fd37ce, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  countX: 20
+  countY: 20
+  countZ: 20
+  spacing: 0.25
+  particleMass: 1
+  particleColor: {r: 1, g: 0.07887034, b: 0, a: 1}
+  colorVariation: 0.15
+  buildDistanceConstraints: 1
+  includeDiagonals: 1
+  compliance: 0
+  breakForce: 10
+  damping: 0
+  enableSelfCollision: 1
+  fixTopRow: 0
+  fixBottomRow: 0
+--- !u!4 &331373541
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 331373539}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.19233534, y: 0.2426977, z: 0.5987851, w: 0.7386213}
+  m_LocalPosition: {x: -6.76, y: 39.11, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: -0.374, y: 36.077, z: 77.94}
 --- !u!1 &410087039
 GameObject:
   m_ObjectHideFlags: 0
@@ -720,7 +779,7 @@ MonoBehaviour:
   gravity: {x: 0, y: -9.81, z: 0}
   groundY: 0
   damping: 0
-  defaultRadius: 0.1
+  particleRadius: 0.1
   defaultMass: 1
   maxParticles: 100000
   maxConstraints: 500000
@@ -732,6 +791,7 @@ MonoBehaviour:
   tableSize: 262139
   frictionStatic: 1.05
   frictionKinetic: 0.83
+  maxDepenetrationSpeed: 5
 --- !u!4 &738072656
 Transform:
   m_ObjectHideFlags: 0
@@ -1199,15 +1259,15 @@ MonoBehaviour:
   countY: 20
   countZ: 20
   spacing: 0.25
-  particleRadius: 0.1
   particleMass: 1
   particleColor: {r: 0, g: 0.43016768, b: 1, a: 1}
   colorVariation: 0.15
-  buildDistanceConstraints: 0
-  includeDiagonals: 0
+  buildDistanceConstraints: 1
+  includeDiagonals: 1
   compliance: 0
-  breakForce: 10
+  breakForce: 5
   damping: 0
+  enableSelfCollision: 1
   fixTopRow: 0
   fixBottomRow: 0
 --- !u!4 &1748179910
@@ -1218,72 +1278,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1748179908}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalRotation: {x: 0.37273973, y: 0.64922076, z: 0.47033986, w: 0.4672879}
   m_LocalPosition: {x: 2.72, y: 8.11, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1765887745
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1765887747}
-  - component: {fileID: 1765887746}
-  m_Layer: 0
-  m_Name: cube-generator (1)
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &1765887746
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1765887745}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 4a9609dd3c1e78243bb1f72d19fd37ce, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  countX: 20
-  countY: 20
-  countZ: 20
-  spacing: 0.25
-  particleRadius: 0.1
-  particleMass: 1
-  particleColor: {r: 0, g: 0.43016768, b: 1, a: 1}
-  colorVariation: 0.15
-  buildDistanceConstraints: 1
-  includeDiagonals: 1
-  compliance: 0
-  breakForce: 10
-  damping: 0
-  fixTopRow: 0
-  fixBottomRow: 0
---- !u!4 &1765887747
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1765887745}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 2.72, y: 8.11, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: -15.21, y: 97.194, z: 73.151}
 --- !u!1 &1847991220
 GameObject:
   m_ObjectHideFlags: 0
@@ -1361,7 +1362,7 @@ SceneRoots:
   - {fileID: 1185090729}
   - {fileID: 500272163}
   - {fileID: 1748179910}
-  - {fileID: 1765887747}
+  - {fileID: 331373541}
   - {fileID: 1057032364}
   - {fileID: 571373129}
   - {fileID: 1428929101}

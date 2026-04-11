@@ -28,6 +28,10 @@ public class CubeGenerator : MonoBehaviour
     [Tooltip("Constraint damping (beta). 0 = no damping.")]
     public float damping = 0f;
 
+    [Header("Collision")]
+    [Tooltip("When enabled, particles within this body collide with each other (phase = 0). When disabled, they share a phase and skip mutual collision.")]
+    public bool enableSelfCollision = false;
+
     [Header("Fixed Particles")]
     [Tooltip("Fix the top row (y = countY-1) in place (invMass = 0)")]
     public bool fixTopRow = false;
@@ -44,6 +48,11 @@ public class CubeGenerator : MonoBehaviour
             Debug.LogError("CubeGenerator: No SolverManager found in scene.");
             return;
         }
+
+        // Phase 0 means "no group" — particles collide with everything,
+        // including each other. A unique phase disables self-collision
+        // within this body (Macklin et al. 2014, section 3/5).
+        int phase = enableSelfCollision ? PhaseManager.PhaseNone : PhaseManager.AllocatePhase();
 
         Vector3 origin = transform.position;
         Quaternion rot = transform.rotation;
@@ -72,7 +81,7 @@ public class CubeGenerator : MonoBehaviour
                     Vector3 pos = origin + rot * localPos;
                     bool isFixed = (fixBottomRow && y == 0) || (fixTopRow && y == countY - 1);
                     float mass = isFixed ? 0f : particleMass;
-                    int idx = manager.AddParticle(pos, Vector3.zero, mass, VariedColor());
+                    int idx = manager.AddParticle(pos, Vector3.zero, mass, VariedColor(), phase);
                     _particleIndices[x, y, z] = idx;
                 }
             }
