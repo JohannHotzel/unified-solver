@@ -1,0 +1,659 @@
+// Unified solver — every kernel for the v0.1 simulation pipeline lives
+// in this single compute shader. Order of dispatches per FixedUpdate is
+// driven from SolverManager.cs.
+//
+// Once per frame:
+//   ClearHash → BuildHash
+//
+// Per substep (n times per frame):
+//   Predict → ClearDeltas → SolveDistance → SolveContact → ApplyDeltas
+//   → SolveGround → SolveSphere → SolveCapsule → SolveBox → UpdateVelocity
+
+#pragma kernel Predict
+#pragma kernel ClearDeltas
+#pragma kernel SolveDistance
+#pragma kernel SolveContact
+#pragma kernel ApplyDeltas
+#pragma kernel SolveGround
+#pragma kernel SolveSphere
+#pragma kernel SolveCapsule
+#pragma kernel SolveBox
+#pragma kernel UpdateVelocity
+#pragma kernel ClearHash
+#pragma kernel BuildHash
+
+// ─────────────────────────────────────────────
+// Particle data (60 bytes)
+//
+// Layout must match ParticleGPU in SolverData.cs byte-for-byte.
+// ─────────────────────────────────────────────
+struct Particle
+{
+    float3 position;
+    float3 velocity;
+    float3 prevPosition;
+    float  invMass;
+    float  radius;
+    int    phase;
+    float3 color;
+};
+
+// ─────────────────────────────────────────────
+// XPBD distance constraint (24 bytes)
+// ─────────────────────────────────────────────
+struct DistanceConstraint
+{
+    int   particleA;
+    int   particleB;
+    float restLength;   // -1 = broken
+    float compliance;   // alpha: 0 = rigid, larger = softer
+    float breakForce;   // 0 = unbreakable, >0 = force threshold in N
+    float damping;      // beta: 0 = no damping
+};
+
+// ─────────────────────────────────────────────
+// Buffers
+// ─────────────────────────────────────────────
+RWStructuredBuffer<Particle>           _Particles;
+RWStructuredBuffer<DistanceConstraint> _Constraints;
+
+// Atomic accumulation (fixed-point int3 because HLSL has no atomic float).
+RWStructuredBuffer<int3> _DeltaPos;
+RWStructuredBuffer<int>  _ConstraintCounts;
+
+// Sphere collider data (16 bytes)
+struct SphereCollider
+{
+    float3 center;
+    float  radius;
+};
+StructuredBuffer<SphereCollider> _SphereColliders;
+
+// Capsule collider data (32 bytes)
+struct CapsuleCollider
+{
+    float3 pointA;
+    float  radius;
+    float3 pointB;
+    float  _pad0;
+};
+StructuredBuffer<CapsuleCollider> _CapsuleColliders;
+
+// Box collider data (60 bytes)
+struct BoxCollider
+{
+    float3 center;
+    float3 halfExtents;
+    float3 axisX;
+    float3 axisY;
+    float3 axisZ;
+};
+StructuredBuffer<BoxCollider> _BoxColliders;
+
+// ─────────────────────────────────────────────
+// Spatial hash buffers
+// ─────────────────────────────────────────────
+RWStructuredBuffer<int> _HashHead;   // [_TableSize]   head of linked list per cell, -1 = empty
+RWStructuredBuffer<int> _HashNext;   // [maxParticles] next pointer per particle,    -1 = end
+
+// ─────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────
+uint   _ParticleCount;
+uint   _ConstraintCount;
+float  _DeltaTime;
+float3 _Gravity;
+float  _GroundY;
+float  _SOR;          // Successive Over-Relaxation (1..2)
+float  _Damping;      // Global velocity damping (0 = none)
+uint   _SphereColliderCount;
+uint   _CapsuleColliderCount;
+uint   _BoxColliderCount;
+float  _CellSize;
+uint   _TableSize;
+float  _FrictionStatic;   // mu_s — Coulomb static  threshold (tangential / normal)
+float  _FrictionKinetic;  // mu_k — Coulomb kinetic scale     (tangential / normal, <= mu_s)
+// Fixed-point precision. Must match SolverData.FP_SCALE.
+static const float FP_SCALE = 100000.0;
+static const float FP_INV   = 1.0 / FP_SCALE;
+
+// ─────────────────────────────────────────────
+// Predict — semi-implicit Euler position prediction
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void Predict(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount) return;
+
+    Particle p = _Particles[id.x];
+    if (p.invMass == 0.0) return;
+
+    p.prevPosition = p.position;
+    p.velocity    += _DeltaTime * _Gravity;
+    p.position    += _DeltaTime * p.velocity;
+
+    _Particles[id.x] = p;
+}
+
+// ─────────────────────────────────────────────
+// SolveGround — ground plane separation + Coulomb friction
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void SolveGround(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount) return;
+
+    Particle p = _Particles[id.x];
+    if (p.invMass == 0.0) return;
+
+    float minY = _GroundY + p.radius;
+    if (p.position.y < minY)
+    {
+        float penetration = minY - p.position.y;
+
+        // Normal: push out of ground
+        p.position.y = minY;
+
+        // Friction: resist horizontal (tangential) movement this substep.
+        // n = (0,1,0) so dx_t is purely the xz component.
+        float3 dx  = p.position - p.prevPosition;
+        float2 dxt = dx.xz;
+        float  len = length(dxt);
+        if (len > 1e-7)
+        {
+            // Static:  fully cancel if within Coulomb cone
+            // Kinetic: cap at mu_k * penetration
+            float limit = (len < _FrictionStatic * penetration)
+                        ? len
+                        : _FrictionKinetic * penetration;
+            p.position.xz -= (dxt / len) * min(len, limit);
+        }
+    }
+
+    _Particles[id.x] = p;
+}
+
+// ─────────────────────────────────────────────
+// UpdateVelocity — XPBD post-step velocity update + global damping
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void UpdateVelocity(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount) return;
+
+    Particle p = _Particles[id.x];
+    if (p.invMass == 0.0) return;
+
+    p.velocity = (p.position - p.prevPosition) / _DeltaTime;
+
+    // Global velocity damping (exponential decay)
+    p.velocity *= max(0.0, 1.0 - _Damping * _DeltaTime);
+
+    _Particles[id.x] = p;
+}
+
+// ─────────────────────────────────────────────
+// SolveDistance — XPBD distance constraint solve with damping
+//
+// Single iteration per substep, lambda starts at 0 so the lambda term
+// drops out (Macklin 2019, Eq. 7). Damping form (Macklin 2019, Eq. 8):
+//
+//   dlambda = (-C(x) - gamma * grad C . (x - x_n))
+//             / ((1 + gamma) * (wA + wB) + alphaTilde)
+//
+//   alphaTilde = compliance / dt^2
+//   gamma      = compliance * damping / dt
+//
+// grad C . (x - x_n) = n . [(posB - prevB) - (posA - prevA)]
+//
+// Deltas are accumulated atomically into _DeltaPos for parallel Jacobi.
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void SolveDistance(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ConstraintCount) return;
+
+    DistanceConstraint c = _Constraints[id.x];
+
+    // Skip broken constraints
+    if (c.restLength < 0.0) return;
+
+    float3 posA  = _Particles[c.particleA].position;
+    float3 posB  = _Particles[c.particleB].position;
+    float3 prevA = _Particles[c.particleA].prevPosition;
+    float3 prevB = _Particles[c.particleB].prevPosition;
+    float  wA    = _Particles[c.particleA].invMass;
+    float  wB    = _Particles[c.particleB].invMass;
+
+    float wSum = wA + wB;
+    if (wSum == 0.0) return;
+
+    float3 diff = posB - posA;
+    float  dist = length(diff);
+    if (dist < 1e-7) return;
+
+    float3 n = diff / dist;
+
+    float alphaTilde = c.compliance / (_DeltaTime * _DeltaTime);
+    float gamma      = (c.compliance * c.damping) / _DeltaTime;
+
+    float constraint  = dist - c.restLength;
+    float dampingTerm = gamma * dot(n, (posB - prevB) - (posA - prevA));
+
+    float dlambda = (-constraint - dampingTerm) / ((1.0 + gamma) * wSum + alphaTilde);
+
+    // Break check: F = |dlambda| / dt_s
+    if (c.breakForce > 0.0)
+    {
+        float force = abs(dlambda) / _DeltaTime;
+        if (force > c.breakForce)
+        {
+            _Constraints[id.x].restLength = -1.0;
+            return;
+        }
+    }
+
+    float3 deltaA = -wA * dlambda * n;
+    float3 deltaB =  wB * dlambda * n;
+
+    int3 dA = int3(
+        round(deltaA.x * FP_SCALE),
+        round(deltaA.y * FP_SCALE),
+        round(deltaA.z * FP_SCALE)
+    );
+    int3 dB = int3(
+        round(deltaB.x * FP_SCALE),
+        round(deltaB.y * FP_SCALE),
+        round(deltaB.z * FP_SCALE)
+    );
+
+    int dummy;
+    InterlockedAdd(_DeltaPos[c.particleA].x, dA.x, dummy);
+    InterlockedAdd(_DeltaPos[c.particleA].y, dA.y, dummy);
+    InterlockedAdd(_DeltaPos[c.particleA].z, dA.z, dummy);
+    InterlockedAdd(_ConstraintCounts[c.particleA], 1, dummy);
+
+    InterlockedAdd(_DeltaPos[c.particleB].x, dB.x, dummy);
+    InterlockedAdd(_DeltaPos[c.particleB].y, dB.y, dummy);
+    InterlockedAdd(_DeltaPos[c.particleB].z, dB.z, dummy);
+    InterlockedAdd(_ConstraintCounts[c.particleB], 1, dummy);
+}
+
+// ─────────────────────────────────────────────
+// ApplyDeltas — averaged Jacobi delta application with SOR
+// (Flex paper Eq. 13)
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void ApplyDeltas(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount) return;
+
+    Particle p = _Particles[id.x];
+    if (p.invMass == 0.0) return;
+
+    int count = _ConstraintCounts[id.x];
+    if (count == 0) return;
+
+    float3 delta = float3(
+        _DeltaPos[id.x].x * FP_INV,
+        _DeltaPos[id.x].y * FP_INV,
+        _DeltaPos[id.x].z * FP_INV
+    );
+
+    p.position += _SOR * delta / (float)count;
+
+    _Particles[id.x] = p;
+}
+
+// ─────────────────────────────────────────────
+// ClearDeltas — reset Jacobi accumulators
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void ClearDeltas(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount) return;
+
+    _DeltaPos[id.x] = int3(0, 0, 0);
+    _ConstraintCounts[id.x] = 0;
+}
+
+// ─────────────────────────────────────────────
+// SolveSphere — sphere collider separation + friction
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void SolveSphere(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount) return;
+
+    Particle p = _Particles[id.x];
+    if (p.invMass == 0.0) return;
+
+    for (uint i = 0; i < _SphereColliderCount; i++)
+    {
+        SphereCollider sc = _SphereColliders[i];
+        float3 diff = p.position - sc.center;
+        float  dist = length(diff);
+        float  minDist = sc.radius + p.radius;
+
+        if (dist < minDist && dist > 1e-7)
+        {
+            float3 n           = diff / dist;
+            float  penetration = minDist - dist;
+
+            // Capture movement before any correction
+            float3 dx = p.position - p.prevPosition;
+
+            // Normal: project onto sphere surface
+            p.position = sc.center + n * minDist;
+
+            // Cancel inward velocity (prevPosition trick)
+            float3 prevDiff = p.prevPosition - sc.center;
+            float  prevProj = dot(prevDiff, n);
+            if (prevProj < minDist)
+                p.prevPosition += (minDist - prevProj) * n;
+
+            // Friction: resist tangential movement along sphere surface
+            float3 dx_t = dx - dot(dx, n) * n;
+            float  len  = length(dx_t);
+            if (len > 1e-7)
+            {
+                float limit = (len < _FrictionStatic * penetration)
+                            ? len
+                            : _FrictionKinetic * penetration;
+                p.position -= (dx_t / len) * min(len, limit);
+            }
+        }
+    }
+
+    _Particles[id.x] = p;
+}
+
+// ─────────────────────────────────────────────
+// SolveCapsule — capsule collider separation + friction
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void SolveCapsule(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount) return;
+
+    Particle p = _Particles[id.x];
+    if (p.invMass == 0.0) return;
+
+    for (uint i = 0; i < _CapsuleColliderCount; i++)
+    {
+        CapsuleCollider cc = _CapsuleColliders[i];
+
+        // Closest point on segment (pointA, pointB) to particle position
+        float3 ab     = cc.pointB - cc.pointA;
+        float  abLen2 = dot(ab, ab);
+        float3 closest;
+        if (abLen2 < 1e-10)
+        {
+            // Degenerate capsule (zero-length segment) — treat as sphere
+            closest = cc.pointA;
+        }
+        else
+        {
+            float t = saturate(dot(p.position - cc.pointA, ab) / abLen2);
+            closest = cc.pointA + t * ab;
+        }
+
+        float3 diff    = p.position - closest;
+        float  dist    = length(diff);
+        float  minDist = cc.radius + p.radius;
+
+        if (dist < minDist && dist > 1e-7)
+        {
+            float3 n           = diff / dist;
+            float  penetration = minDist - dist;
+
+            float3 dx = p.position - p.prevPosition;
+
+            p.position = closest + n * minDist;
+
+            float3 prevDiff = p.prevPosition - closest;
+            float  prevProj = dot(prevDiff, n);
+            if (prevProj < minDist)
+                p.prevPosition += (minDist - prevProj) * n;
+
+            float3 dx_t = dx - dot(dx, n) * n;
+            float  len  = length(dx_t);
+            if (len > 1e-7)
+            {
+                float limit = (len < _FrictionStatic * penetration)
+                            ? len
+                            : _FrictionKinetic * penetration;
+                p.position -= (dx_t / len) * min(len, limit);
+            }
+        }
+    }
+
+    _Particles[id.x] = p;
+}
+
+// ─────────────────────────────────────────────
+// SolveBox — oriented box collider (OBB) separation + friction
+//
+// Transform the particle into box-local space, find the closest point
+// on the AABB, then resolve the collision back in world space.
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void SolveBox(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount) return;
+
+    Particle p = _Particles[id.x];
+    if (p.invMass == 0.0) return;
+
+    for (uint i = 0; i < _BoxColliderCount; i++)
+    {
+        BoxCollider bc = _BoxColliders[i];
+
+        // Transform particle position into box-local space
+        float3 rel   = p.position - bc.center;
+        float3 local = float3(dot(rel, bc.axisX), dot(rel, bc.axisY), dot(rel, bc.axisZ));
+
+        // Closest point on AABB in local space
+        float3 clamped   = clamp(local, -bc.halfExtents, bc.halfExtents);
+        float3 diffLocal = local - clamped;
+        float  dist      = length(diffLocal);
+
+        float3 n;          // world-space collision normal
+        float3 closest;    // world-space closest point on box surface
+        float  penetration;
+
+        if (dist > 1e-7)
+        {
+            // Particle center is outside the box
+            if (dist >= p.radius) continue;
+
+            float3 nLocal = diffLocal / dist;
+            n = nLocal.x * bc.axisX + nLocal.y * bc.axisY + nLocal.z * bc.axisZ;
+            closest = bc.center + clamped.x * bc.axisX + clamped.y * bc.axisY + clamped.z * bc.axisZ;
+            penetration = p.radius - dist;
+        }
+        else
+        {
+            // Particle center is inside the box — push to nearest face
+            float3 distToFace = bc.halfExtents - abs(local);
+            float3 nLocal;
+
+            if (distToFace.x <= distToFace.y && distToFace.x <= distToFace.z)
+                nLocal = float3(local.x >= 0.0 ?  1.0 : -1.0, 0, 0);
+            else if (distToFace.y <= distToFace.z)
+                nLocal = float3(0, local.y >= 0.0 ?  1.0 : -1.0, 0);
+            else
+                nLocal = float3(0, 0, local.z >= 0.0 ?  1.0 : -1.0);
+
+            float minFaceDist = min(distToFace.x, min(distToFace.y, distToFace.z));
+            n = nLocal.x * bc.axisX + nLocal.y * bc.axisY + nLocal.z * bc.axisZ;
+            penetration = p.radius + minFaceDist;
+
+            float3 faceLocal = local + nLocal * minFaceDist;
+            closest = bc.center + faceLocal.x * bc.axisX + faceLocal.y * bc.axisY + faceLocal.z * bc.axisZ;
+        }
+
+        float3 dx = p.position - p.prevPosition;
+
+        p.position = closest + n * p.radius;
+
+        float3 prevDiff = p.prevPosition - closest;
+        float  prevProj = dot(prevDiff, n);
+        if (prevProj < p.radius)
+            p.prevPosition += (p.radius - prevProj) * n;
+
+        float3 dx_t = dx - dot(dx, n) * n;
+        float  len  = length(dx_t);
+        if (len > 1e-7)
+        {
+            float limit = (len < _FrictionStatic * penetration)
+                        ? len
+                        : _FrictionKinetic * penetration;
+            p.position -= (dx_t / len) * min(len, limit);
+        }
+    }
+
+    _Particles[id.x] = p;
+}
+
+// ─────────────────────────────────────────────
+// Spatial hash helpers
+// ─────────────────────────────────────────────
+int3 WorldToCell(float3 pos)
+{
+    return (int3)floor(pos / _CellSize);
+}
+
+uint CellHash(int3 cell)
+{
+    // Large primes scatter integer coordinates across the table.
+    uint h = (uint)(cell.x * 92837111 ^ cell.y * 689287499 ^ cell.z * 283923481);
+    return h % _TableSize;
+}
+
+// ─────────────────────────────────────────────
+// ClearHash — reset every cell head pointer to -1
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void ClearHash(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _TableSize) return;
+    _HashHead[id.x] = -1;
+}
+
+// ─────────────────────────────────────────────
+// BuildHash — insert every particle into its cell's linked list
+//
+// InterlockedExchange atomically swaps the head pointer so concurrent
+// threads do not corrupt the list. Each thread only writes to its own
+// _HashNext slot — no conflict there.
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void BuildHash(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _ParticleCount) return;
+
+    int3 cell = WorldToCell(_Particles[id.x].position);
+    uint hash = CellHash(cell);
+
+    int old;
+    InterlockedExchange(_HashHead[hash], (int)id.x, old);
+    _HashNext[id.x] = old;
+}
+
+// ─────────────────────────────────────────────
+// SolveContact — particle-particle contact via spatial hash
+//
+// The hash is built once per frame from pre-substep positions. Each
+// substep we query it using the current position of i and check actual
+// overlap against current positions of candidates. Corrections are
+// accumulated into the same fixed-point Jacobi buffers used by distance
+// constraints, then applied together by ApplyDeltas.
+// ─────────────────────────────────────────────
+[numthreads(256,1,1)]
+void SolveContact(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ParticleCount) return;
+
+    Particle pi = _Particles[i];
+    if (pi.invMass == 0.0) return;
+
+    int3 cellI = WorldToCell(pi.position);
+
+    for (int dx = -1; dx <= 1; dx++)
+    for (int dy = -1; dy <= 1; dy++)
+    for (int dz = -1; dz <= 1; dz++)
+    {
+        uint hash = CellHash(cellI + int3(dx, dy, dz));
+        int  j    = _HashHead[hash];
+
+        while (j >= 0)
+        {
+            if ((uint)j != i)
+            {
+                Particle pj    = _Particles[j];
+                float3   delta = pi.position - pj.position;
+                float    dist2 = dot(delta, delta);
+                float    minD  = pi.radius + pj.radius;
+
+                if (dist2 < minD * minD && dist2 > 1e-10)
+                {
+                    float  dist        = sqrt(dist2);
+                    float3 n           = delta / dist;
+                    float  penetration = minD - dist;
+
+                    float wSum = pi.invMass + pj.invMass;
+                    if (wSum > 0.0)
+                    {
+                        int dummy;
+
+                        // ── Normal separation ──────────────────────────
+                        float  s  = penetration / wSum;
+                        float3 dI =  n * (s * pi.invMass);
+                        float3 dJ = -n * (s * pj.invMass);
+
+                        InterlockedAdd(_DeltaPos[i].x, (int)round(dI.x * FP_SCALE), dummy);
+                        InterlockedAdd(_DeltaPos[i].y, (int)round(dI.y * FP_SCALE), dummy);
+                        InterlockedAdd(_DeltaPos[i].z, (int)round(dI.z * FP_SCALE), dummy);
+                        InterlockedAdd(_ConstraintCounts[i], 1, dummy);
+
+                        InterlockedAdd(_DeltaPos[j].x, (int)round(dJ.x * FP_SCALE), dummy);
+                        InterlockedAdd(_DeltaPos[j].y, (int)round(dJ.y * FP_SCALE), dummy);
+                        InterlockedAdd(_DeltaPos[j].z, (int)round(dJ.z * FP_SCALE), dummy);
+                        InterlockedAdd(_ConstraintCounts[j], 1, dummy);
+
+                        // ── Friction (tangential relative displacement) ─
+                        float3 dxRel = (pi.position - pi.prevPosition)
+                                     - (pj.position - pj.prevPosition);
+                        float3 dxt   = dxRel - dot(dxRel, n) * n;
+                        float  len   = length(dxt);
+                        if (len > 1e-7)
+                        {
+                            float limit = (len < _FrictionStatic * penetration)
+                                        ? len
+                                        : _FrictionKinetic * penetration;
+                            float  scale = min(len, limit);
+                            float3 tDir  = dxt / len;
+
+                            // Mass-weighted split (momentum conserving)
+                            float3 fI = -tDir * scale * (pi.invMass / wSum);
+                            float3 fJ =  tDir * scale * (pj.invMass / wSum);
+
+                            InterlockedAdd(_DeltaPos[i].x, (int)round(fI.x * FP_SCALE), dummy);
+                            InterlockedAdd(_DeltaPos[i].y, (int)round(fI.y * FP_SCALE), dummy);
+                            InterlockedAdd(_DeltaPos[i].z, (int)round(fI.z * FP_SCALE), dummy);
+                            InterlockedAdd(_ConstraintCounts[i], 1, dummy);
+
+                            InterlockedAdd(_DeltaPos[j].x, (int)round(fJ.x * FP_SCALE), dummy);
+                            InterlockedAdd(_DeltaPos[j].y, (int)round(fJ.y * FP_SCALE), dummy);
+                            InterlockedAdd(_DeltaPos[j].z, (int)round(fJ.z * FP_SCALE), dummy);
+                            InterlockedAdd(_ConstraintCounts[j], 1, dummy);
+                        }
+                    }
+                }
+            }
+            j = _HashNext[j];
+        }
+    }
+}
