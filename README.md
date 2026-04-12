@@ -16,6 +16,13 @@ All particle types — soft bodies, cloth, ropes, rigid bodies, fluids — share
 - **Successive Over-Relaxation** — SOR factor for faster constraint convergence (Flex paper Eq. 13)
 - **Parallel Jacobi Solver** — fixed-point atomic accumulation for lock-free parallel constraint solving
 
+## Demos
+
+<p>
+  <img src="Images/cubes.gif" alt="Cubes" width="350">
+  <img src="Images/cloth.gif" alt="Cloth" width="350">
+</p>
+
 ## Architecture
 
 ```
@@ -37,9 +44,12 @@ SolverManager (singleton, orchestrator)
 2. Create a GameObject with `SolverManager` and assign the `UnifiedSolver` compute shader
 3. Add generators (CubeGenerator, ClothGenerator) or spawn particles via the `SolverManager.AddParticle()` API
 4. Add a `ParticleRenderer` with the particle material for sphere visualization
-5. For cloth: assign a material using the `UnifiedSolver/ClothRenderer` shader
+5. Add a `ConstraintRenderer` with the constraint material for constraint visualization
+6. For cloth: assign a material using the `UnifiedSolver/ClothRenderer` shader
 
 ## Roadmap
+
+> **Note:** The features listed below are **not yet implemented**. They represent planned future development milestones.
 
 ### v0.3 — Cloth & Ropes
 
@@ -61,6 +71,6 @@ No compute shader changes required — cloth and ropes use existing distance con
 
 ## References
 
-- Macklin, M. et al. (2014). *Unified Particle Physics for Real-Time Applications*. ACM TOG 33(4).
-- Macklin, M. et al. (2019). *Small Steps in Physics Simulation*. SCA 2019.
-- Macklin, M. & Mueller, M. (2013). *Position Based Fluids*. ACM TOG 32(4).
+- Macklin, M. et al. (2014). *Unified Particle Physics for Real-Time Applications*.
+- Macklin, M. et al. (2019). *Small Steps in Physics Simulation*.
+- Macklin, M. & Mueller, M. (2013). *Position Based Fluids*.
