@@ -23,8 +23,6 @@ public class ClothGenerator : MonoBehaviour
     [Header("Constraints")]
     [Tooltip("XPBD compliance (alpha). 0 = rigid, larger = softer.")]
     public float compliance = 0f;
-    [Tooltip("Force threshold in Newton for breaking. 0 = unbreakable.")]
-    public float breakForce = 0f;
     [Tooltip("Constraint damping (beta). 0 = no damping.")]
     public float constraintDamping = 0f;
     [Tooltip("Include diagonal (shear) constraints for wrinkle resistance.")]
@@ -115,13 +113,13 @@ public class ClothGenerator : MonoBehaviour
                 // Structural: horizontal
                 if (x + 1 < resolutionX)
                 {
-                    manager.AddDistanceConstraint(a, indices[y * resolutionX + x + 1], compliance, breakForce, constraintDamping);
+                    manager.AddDistanceConstraint(a, indices[y * resolutionX + x + 1], compliance, 0f, constraintDamping);
                     constraintCount++;
                 }
                 // Structural: vertical
                 if (y + 1 < resolutionY)
                 {
-                    manager.AddDistanceConstraint(a, indices[(y + 1) * resolutionX + x], compliance, breakForce, constraintDamping);
+                    manager.AddDistanceConstraint(a, indices[(y + 1) * resolutionX + x], compliance, 0f, constraintDamping);
                     constraintCount++;
                 }
 
@@ -130,12 +128,12 @@ public class ClothGenerator : MonoBehaviour
                 // Shear diagonals
                 if (x + 1 < resolutionX && y + 1 < resolutionY)
                 {
-                    manager.AddDistanceConstraint(a, indices[(y + 1) * resolutionX + x + 1], compliance, breakForce, constraintDamping);
+                    manager.AddDistanceConstraint(a, indices[(y + 1) * resolutionX + x + 1], compliance, 0f, constraintDamping);
                     constraintCount++;
                 }
                 if (x - 1 >= 0 && y + 1 < resolutionY)
                 {
-                    manager.AddDistanceConstraint(a, indices[(y + 1) * resolutionX + x - 1], compliance, breakForce, constraintDamping);
+                    manager.AddDistanceConstraint(a, indices[(y + 1) * resolutionX + x - 1], compliance, 0f, constraintDamping);
                     constraintCount++;
                 }
             }
@@ -265,9 +263,9 @@ public class ClothGenerator : MonoBehaviour
         );
 
         Gizmos.matrix = Matrix4x4.TRS(transform.position, transform.rotation, Vector3.one);
-        Gizmos.color = selected ? new Color(1f, 0.4f, 0.5f, 0.25f) : new Color(0.9f, 0.3f, 0.4f, 0.15f);
+        Gizmos.color = selected ? new Color(0.4f, 0.7f, 1f, 0.25f) : new Color(0.3f, 0.6f, 1f, 0.15f);
         Gizmos.DrawCube(Vector3.zero, size);
-        Gizmos.color = selected ? new Color(1f, 0.4f, 0.5f, 1f) : new Color(0.9f, 0.3f, 0.4f, 0.6f);
+        Gizmos.color = selected ? new Color(0.4f, 0.7f, 1f, 1f) : new Color(0.3f, 0.6f, 1f, 0.6f);
         Gizmos.DrawWireCube(Vector3.zero, size);
     }
 
