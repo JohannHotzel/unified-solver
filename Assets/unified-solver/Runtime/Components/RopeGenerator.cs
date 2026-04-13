@@ -3,8 +3,8 @@ using UnityEngine;
 // Spawns a chain of particles forming a rope into the SolverManager.
 // Each consecutive pair is connected by a distance constraint. The rope
 // hangs along the local Y axis from the transform position downward.
-// Optionally builds a tessellated cylinder mesh whose vertex shader
-// reads positions from the GPU particle buffer (no readback).
+// Renders as a camera-facing billboard strip whose vertex shader reads
+// positions from the GPU particle buffer (no readback).
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class RopeGenerator : MonoBehaviour
 {
@@ -38,19 +38,15 @@ public class RopeGenerator : MonoBehaviour
     [Header("Rendering")]
     [Tooltip("Material using the RopeRenderer shader.")]
     public Material ropeMaterial;
-    [Tooltip("Number of vertices around the circumference of the tube.")]
-    public int radialSegments = 8;
-    [Tooltip("Radius of the extruded tube.")]
-    public float tubeRadius = 0.03f;
+    [Tooltip("Half-width of the billboard strip in world units.")]
+    public float ropeWidth = 0.03f;
 
-    // Index of the first rope particle in the global particle buffer.
     int _particleOffset;
     int _particleCount;
     Material _materialInstance;
     MeshFilter _meshFilter;
     MeshRenderer _meshRenderer;
 
-    // Total rope length derived from segments and spacing.
     float RopeLength => (segments - 1) * spacing;
 
     void Start()
@@ -95,10 +91,9 @@ public class RopeGenerator : MonoBehaviour
 
         Debug.Log($"RopeGenerator: Spawned {segments} particles, {constraintCount} constraints (offset={_particleOffset}).");
 
-        // --- Build tube mesh ---
+        // --- Build billboard strip mesh ---
         BuildMesh();
 
-        // --- Setup material ---
         _meshRenderer = GetComponent<MeshRenderer>();
         if (ropeMaterial != null)
         {
@@ -115,8 +110,7 @@ public class RopeGenerator : MonoBehaviour
         _materialInstance.SetBuffer("_Particles", manager.ParticleBuffer);
         _materialInstance.SetInt("_ParticleOffset", _particleOffset);
         _materialInstance.SetInt("_SegmentCount", _particleCount);
-        _materialInstance.SetInt("_RadialSegments", radialSegments);
-        _materialInstance.SetFloat("_TubeRadius", tubeRadius);
+        _materialInstance.SetFloat("_RopeWidth", ropeWidth);
     }
 
     void OnDestroy()
@@ -129,89 +123,48 @@ public class RopeGenerator : MonoBehaviour
     {
         _meshFilter = GetComponent<MeshFilter>();
 
-        int segs = segments;
-        int radial = radialSegments;
-        int vertCount = segs * radial;
-        int triCount = (segs - 1) * radial * 2;
+        // 2 vertices per segment (left + right of the strip).
+        int vertCount = segments * 2;
+        int quadCount = segments - 1;
 
         Vector3[] verts = new Vector3[vertCount];
         Vector2[] uvs = new Vector2[vertCount];
 
-        for (int s = 0; s < segs; s++)
+        for (int s = 0; s < segments; s++)
         {
-            float v = (float)s / (segs - 1);
-            for (int r = 0; r < radial; r++)
-            {
-                int i = s * radial + r;
-                // Placeholder positions — shader overrides them.
-                verts[i] = Vector3.zero;
-                uvs[i] = new Vector2((float)r / radial, v);
-            }
+            float v = (float)s / (segments - 1);
+            int left  = s * 2;
+            int right = s * 2 + 1;
+            verts[left]  = Vector3.zero;
+            verts[right] = Vector3.zero;
+            uvs[left]  = new Vector2(0f, v);
+            uvs[right] = new Vector2(1f, v);
         }
 
-        int[] tris = new int[triCount * 3];
+        // Two triangles per quad, double-sided (4 tris per quad).
+        int[] tris = new int[quadCount * 4 * 3];
         int t = 0;
-        for (int s = 0; s < segs - 1; s++)
+        for (int s = 0; s < segments - 1; s++)
         {
-            for (int r = 0; r < radial; r++)
-            {
-                int rNext = (r + 1) % radial;
+            int bl = s * 2;
+            int br = s * 2 + 1;
+            int tl = (s + 1) * 2;
+            int tr = (s + 1) * 2 + 1;
 
-                int bl = s * radial + r;
-                int br = s * radial + rNext;
-                int tl = (s + 1) * radial + r;
-                int tr = (s + 1) * radial + rNext;
-
-                tris[t++] = bl; tris[t++] = tr; tris[t++] = tl;
-                tris[t++] = bl; tris[t++] = br; tris[t++] = tr;
-            }
-        }
-
-        // End caps — triangle fan at both ends.
-        int capVertStart = vertCount;
-        int capVertCount = 2;
-        int capTriCount = radial * 2;
-
-        Vector3[] allVerts = new Vector3[vertCount + capVertCount];
-        Vector2[] allUvs = new Vector2[vertCount + capVertCount];
-        System.Array.Copy(verts, allVerts, vertCount);
-        System.Array.Copy(uvs, allUvs, vertCount);
-
-        allVerts[capVertStart] = Vector3.zero;
-        allUvs[capVertStart] = new Vector2(0.5f, 0f);
-        allVerts[capVertStart + 1] = Vector3.zero;
-        allUvs[capVertStart + 1] = new Vector2(0.5f, 1f);
-
-        int[] allTris = new int[(triCount + capTriCount) * 3];
-        System.Array.Copy(tris, allTris, triCount * 3);
-
-        int ct = triCount * 3;
-        // Top cap
-        for (int r = 0; r < radial; r++)
-        {
-            int rNext = (r + 1) % radial;
-            allTris[ct++] = capVertStart;
-            allTris[ct++] = 0 * radial + r;
-            allTris[ct++] = 0 * radial + rNext;
-        }
-        // Bottom cap
-        int lastRing = (segs - 1) * radial;
-        for (int r = 0; r < radial; r++)
-        {
-            int rNext = (r + 1) % radial;
-            allTris[ct++] = capVertStart + 1;
-            allTris[ct++] = lastRing + rNext;
-            allTris[ct++] = lastRing + r;
+            // Front
+            tris[t++] = bl; tris[t++] = tl; tris[t++] = tr;
+            tris[t++] = bl; tris[t++] = tr; tris[t++] = br;
+            // Back
+            tris[t++] = bl; tris[t++] = tr; tris[t++] = tl;
+            tris[t++] = bl; tris[t++] = br; tris[t++] = tr;
         }
 
         Mesh mesh = new Mesh();
-        mesh.name = "RopeMesh";
-        if (allVerts.Length > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-        mesh.vertices = allVerts;
-        mesh.uv = allUvs;
-        mesh.triangles = allTris;
-
-        // Large bounds so the mesh is never culled (positions are on GPU).
+        mesh.name = "RopeStripMesh";
+        if (vertCount > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        mesh.vertices = verts;
+        mesh.uv = uvs;
+        mesh.triangles = tris;
         mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 1000f);
 
         _meshFilter.mesh = mesh;
@@ -233,12 +186,7 @@ public class RopeGenerator : MonoBehaviour
             r = SolverManager.Instance.particleRadius;
         float diameter = r * 2f;
 
-        Vector3 size = new Vector3(
-            diameter,
-            RopeLength,
-            diameter
-        );
-
+        Vector3 size = new Vector3(diameter, RopeLength, diameter);
         Vector3 center = new Vector3(0f, -RopeLength * 0.5f, 0f);
 
         Gizmos.matrix = Matrix4x4.TRS(transform.position, transform.rotation, Vector3.one);
