@@ -63,6 +63,12 @@ public class SolverManager : MonoBehaviour
     [Tooltip("Max depenetration speed (m/s). Limits how fast overlapping particles separate per substep to prevent velocity explosions. Lower = gentler separation, higher = snappier but can explode.")]
     public float maxDepenetrationSpeed = 5f;
 
+    [Header("Rigid Bodies")]
+    [Tooltip("Maximum number of rigid bodies.")]
+    public int maxRigidBodies = 256;
+    [Tooltip("Maximum total particle references across all rigid bodies (sum of particle counts).")]
+    public int maxRigidParticleRefs = 10_000;
+
     // GPU buffers
     ComputeBuffer _particleBuffer;
     ComputeBuffer _constraintBuffer;
@@ -73,6 +79,9 @@ public class SolverManager : MonoBehaviour
     ComputeBuffer _boxColliderBuffer;
     ComputeBuffer _hashHeadBuffer;         // int[tableSize]    — head of linked list per cell
     ComputeBuffer _hashNextBuffer;         // int[maxParticles] — next pointer per particle
+    ComputeBuffer _rigidBodyBuffer;
+    ComputeBuffer _rigidParticleIndexBuffer;
+    ComputeBuffer _rigidRestOffsetBuffer;
 
     // CPU-side mirror data
     List<ParticleGPU> _particles = new List<ParticleGPU>();
@@ -96,6 +105,17 @@ public class SolverManager : MonoBehaviour
     List<SolverBoxCollider>     _boxColliders     = new List<SolverBoxCollider>();
     BoxColliderGPU[]            _boxColliderArray;
 
+    // Rigid bodies
+    List<RigidBodyGPU> _rigidBodies       = new List<RigidBodyGPU>();
+    RigidBodyGPU[]     _rigidBodyArray;
+    List<int>          _rigidParticleIndexList = new List<int>();
+    int[]              _rigidParticleIndexArray;
+    List<Vector3>      _rigidRestOffsetList    = new List<Vector3>();
+    Vector3[]          _rigidRestOffsetArray;
+    int                _rigidBodyCount       = 0;
+    int                _rigidParticleRefCount = 0;
+    bool               _rigidBodiesDirty     = true;
+
     // Kernel IDs
     int _kernelPredict;
     int _kernelClearDeltas;
@@ -109,6 +129,7 @@ public class SolverManager : MonoBehaviour
     int _kernelUpdateVelocity;
     int _kernelClearHash;
     int _kernelBuildHash;
+    int _kernelSolveRigidBody;
     // CPU-side timing breakdown (rough — Dispatch is async so this is mostly
     // command submission cost; useful as a relative indicator in the editor).
     Stopwatch _swTotal   = new Stopwatch();
@@ -144,6 +165,7 @@ public class SolverManager : MonoBehaviour
         _kernelUpdateVelocity = computeShader.FindKernel("UpdateVelocity");
         _kernelClearHash      = computeShader.FindKernel("ClearHash");
         _kernelBuildHash      = computeShader.FindKernel("BuildHash");
+        _kernelSolveRigidBody = computeShader.FindKernel("SolveRigidBody");
         _particleBuffer        = new ComputeBuffer(maxParticles,        SolverData.ParticleStride);
         _constraintBuffer      = new ComputeBuffer(maxConstraints,      SolverData.DistanceConstraintStride);
         _deltaBuffer           = new ComputeBuffer(maxParticles,        SolverData.DeltaPosStride);
@@ -153,12 +175,18 @@ public class SolverManager : MonoBehaviour
         _boxColliderBuffer     = new ComputeBuffer(maxBoxColliders,     SolverData.BoxColliderStride);
         _hashHeadBuffer        = new ComputeBuffer(tableSize,           SolverData.IntStride);
         _hashNextBuffer        = new ComputeBuffer(maxParticles,        SolverData.IntStride);
+        _rigidBodyBuffer          = new ComputeBuffer(maxRigidBodies,       SolverData.RigidBodyStride);
+        _rigidParticleIndexBuffer = new ComputeBuffer(maxRigidParticleRefs, SolverData.IntStride);
+        _rigidRestOffsetBuffer    = new ComputeBuffer(maxRigidParticleRefs, SolverData.Vec3Stride);
 
-        _particleArray         = new ParticleGPU[maxParticles];
-        _constraintArray       = new DistanceConstraintGPU[maxConstraints];
-        _sphereColliderArray   = new SphereColliderGPU[maxSphereColliders];
-        _capsuleColliderArray  = new CapsuleColliderGPU[maxCapsuleColliders];
-        _boxColliderArray      = new BoxColliderGPU[maxBoxColliders];
+        _particleArray           = new ParticleGPU[maxParticles];
+        _constraintArray         = new DistanceConstraintGPU[maxConstraints];
+        _sphereColliderArray     = new SphereColliderGPU[maxSphereColliders];
+        _capsuleColliderArray    = new CapsuleColliderGPU[maxCapsuleColliders];
+        _boxColliderArray        = new BoxColliderGPU[maxBoxColliders];
+        _rigidBodyArray          = new RigidBodyGPU[maxRigidBodies];
+        _rigidParticleIndexArray = new int[maxRigidParticleRefs];
+        _rigidRestOffsetArray    = new Vector3[maxRigidParticleRefs];
     }
 
     void OnDestroy()
@@ -172,6 +200,9 @@ public class SolverManager : MonoBehaviour
         _boxColliderBuffer?.Release();
         _hashHeadBuffer?.Release();
         _hashNextBuffer?.Release();
+        _rigidBodyBuffer?.Release();
+        _rigidParticleIndexBuffer?.Release();
+        _rigidRestOffsetBuffer?.Release();
 
         if (Instance == this) Instance = null;
     }
@@ -243,6 +274,91 @@ public class SolverManager : MonoBehaviour
         return _particles[index].position;
     }
 
+    public int AddRigidBody(int[] particleIndices)
+        => AddRigidBody(particleIndices, Quaternion.identity);
+
+    // Register a set of existing particles as a rigid body.
+    // Rest center of mass is computed from the current particle positions.
+    // Per-particle rest offsets q_i are stored in the rigid body's local
+    // frame (unrotated), i.e. q_i = inverse(initialRotation) * (x_i - x_cm^0).
+    // The initial quaternion carries the body's starting world orientation
+    // and persists across frames as warm-start for the Müller/Bender
+    // rotation extraction.
+    public int AddRigidBody(int[] particleIndices, Quaternion initialRotation)
+    {
+        if (particleIndices == null || particleIndices.Length == 0)
+        {
+            Debug.LogWarning("SolverManager: AddRigidBody called with empty particle list.");
+            return -1;
+        }
+        if (_rigidBodyCount >= maxRigidBodies)
+        {
+            Debug.LogWarning("SolverManager: Max rigid body count reached.");
+            return -1;
+        }
+        if (_rigidParticleRefCount + particleIndices.Length > maxRigidParticleRefs)
+        {
+            Debug.LogWarning("SolverManager: maxRigidParticleRefs exceeded.");
+            return -1;
+        }
+
+        Vector3 xcm0      = Vector3.zero;
+        float   totalMass = 0f;
+        for (int i = 0; i < particleIndices.Length; i++)
+        {
+            var p = _particles[particleIndices[i]];
+            float m = p.invMass > 0f ? 1f / p.invMass : 0f;
+            xcm0      += m * p.position;
+            totalMass += m;
+        }
+        if (totalMass < 1e-9f)
+        {
+            Debug.LogWarning("SolverManager: Rigid body has zero total mass (all particles fixed?).");
+            return -1;
+        }
+        xcm0 /= totalMass;
+
+        // Store q_i in the body's local (unrotated) frame so that
+        //   goal_i = R * q_i + x_cm
+        // reproduces the world position at t=0 when R == initialRotation.
+        Quaternion invRot = Quaternion.Inverse(initialRotation);
+
+        int offset = _rigidParticleRefCount;
+        for (int i = 0; i < particleIndices.Length; i++)
+        {
+            int     pIdx       = particleIndices[i];
+            Vector3 restOffset = invRot * (_particles[pIdx].position - xcm0);
+
+            int slot = offset + i;
+            if (slot < _rigidParticleIndexList.Count)
+            {
+                _rigidParticleIndexList[slot] = pIdx;
+                _rigidRestOffsetList[slot]    = restOffset;
+            }
+            else
+            {
+                _rigidParticleIndexList.Add(pIdx);
+                _rigidRestOffsetList.Add(restOffset);
+            }
+        }
+
+        var rb = new RigidBodyGPU
+        {
+            particleOffset = offset,
+            particleCount  = particleIndices.Length,
+            quaternion     = initialRotation
+        };
+
+        if (_rigidBodyCount < _rigidBodies.Count)
+            _rigidBodies[_rigidBodyCount] = rb;
+        else
+            _rigidBodies.Add(rb);
+
+        _rigidParticleRefCount += particleIndices.Length;
+        _rigidBodiesDirty       = true;
+        return _rigidBodyCount++;
+    }
+
     public void ReadbackParticles(ParticleGPU[] dest)
     {
         if (_activeCount == 0) return;
@@ -266,10 +382,16 @@ public class SolverManager : MonoBehaviour
     {
         _particles.Clear();
         _constraints.Clear();
-        _activeCount     = 0;
-        _constraintCount = 0;
-        _particlesDirty  = true;
-        _constraintsDirty = true;
+        _rigidBodies.Clear();
+        _rigidParticleIndexList.Clear();
+        _rigidRestOffsetList.Clear();
+        _activeCount           = 0;
+        _constraintCount       = 0;
+        _rigidBodyCount        = 0;
+        _rigidParticleRefCount = 0;
+        _particlesDirty        = true;
+        _constraintsDirty      = true;
+        _rigidBodiesDirty      = true;
         PhaseManager.Reset();
     }
 
@@ -332,6 +454,7 @@ public class SolverManager : MonoBehaviour
     public int SphereColliderCount         => _sphereColliders.Count;
     public int CapsuleColliderCount        => _capsuleColliders.Count;
     public int BoxColliderCount            => _boxColliders.Count;
+    public int RigidBodyCount              => _rigidBodyCount;
 
     // ─────────────────────────────────────────────
     // GPU upload helpers
@@ -350,6 +473,26 @@ public class SolverManager : MonoBehaviour
             _constraintArray[i] = _constraints[i];
         _constraintBuffer.SetData(_constraintArray, 0, 0, _constraintCount);
         _constraintsDirty = false;
+    }
+
+    void UploadRigidBodiesToGPU()
+    {
+        for (int i = 0; i < _rigidBodyCount; i++)
+            _rigidBodyArray[i] = _rigidBodies[i];
+        if (_rigidBodyCount > 0)
+            _rigidBodyBuffer.SetData(_rigidBodyArray, 0, 0, _rigidBodyCount);
+
+        for (int i = 0; i < _rigidParticleRefCount; i++)
+        {
+            _rigidParticleIndexArray[i] = _rigidParticleIndexList[i];
+            _rigidRestOffsetArray[i]    = _rigidRestOffsetList[i];
+        }
+        if (_rigidParticleRefCount > 0)
+        {
+            _rigidParticleIndexBuffer.SetData(_rigidParticleIndexArray, 0, 0, _rigidParticleRefCount);
+            _rigidRestOffsetBuffer.SetData(_rigidRestOffsetArray, 0, 0, _rigidParticleRefCount);
+        }
+        _rigidBodiesDirty = false;
     }
 
     void UploadSphereCollidersToGPU()
@@ -413,8 +556,9 @@ public class SolverManager : MonoBehaviour
         _swTotal.Restart();
         _swUpload.Restart();
 
-        if (_particlesDirty)   UploadParticlesToGPU();
-        if (_constraintsDirty) UploadConstraintsToGPU();
+        if (_particlesDirty)    UploadParticlesToGPU();
+        if (_constraintsDirty)  UploadConstraintsToGPU();
+        if (_rigidBodiesDirty)  UploadRigidBodiesToGPU();
 
         int sphereColliderCount  = Mathf.Min(_sphereColliders.Count,  maxSphereColliders);
         int capsuleColliderCount = Mathf.Min(_capsuleColliders.Count, maxCapsuleColliders);
@@ -461,6 +605,10 @@ public class SolverManager : MonoBehaviour
         computeShader.SetBuffer(_kernelBuildHash,      "_Particles",        _particleBuffer);
         computeShader.SetBuffer(_kernelBuildHash,      "_HashHead",         _hashHeadBuffer);
         computeShader.SetBuffer(_kernelBuildHash,      "_HashNext",         _hashNextBuffer);
+        computeShader.SetBuffer(_kernelSolveRigidBody, "_Particles",            _particleBuffer);
+        computeShader.SetBuffer(_kernelSolveRigidBody, "_RigidBodies",          _rigidBodyBuffer);
+        computeShader.SetBuffer(_kernelSolveRigidBody, "_RigidParticleIndices", _rigidParticleIndexBuffer);
+        computeShader.SetBuffer(_kernelSolveRigidBody, "_RigidRestOffsets",     _rigidRestOffsetBuffer);
         computeShader.SetBuffer(_kernelSolveContact,   "_Particles",        _particleBuffer);
         computeShader.SetBuffer(_kernelSolveContact,   "_HashHead",         _hashHeadBuffer);
         computeShader.SetBuffer(_kernelSolveContact,   "_HashNext",         _hashNextBuffer);
@@ -470,6 +618,7 @@ public class SolverManager : MonoBehaviour
         // Constants
         computeShader.SetInt("_ParticleCount",        _activeCount);
         computeShader.SetInt("_ConstraintCount",      _constraintCount);
+        computeShader.SetInt("_RigidBodyCount",       _rigidBodyCount);
         computeShader.SetInt("_SphereColliderCount",  sphereColliderCount);
         computeShader.SetInt("_CapsuleColliderCount", capsuleColliderCount);
         computeShader.SetInt("_BoxColliderCount",     boxColliderCount);
@@ -513,13 +662,20 @@ public class SolverManager : MonoBehaviour
 
             computeShader.Dispatch(_kernelApplyDeltas, particleGroups, 1, 1);
 
-            // 3. World collision (ground + collider primitives)
+            // 3. Rigid body shape-matching projection (Müller 2005 / Müller-Bender 2016)
+            if (_rigidBodyCount > 0)
+            {
+                int rigidGroups = Mathf.CeilToInt(_rigidBodyCount / 64f);
+                computeShader.Dispatch(_kernelSolveRigidBody, rigidGroups, 1, 1);
+            }
+
+            // 4. World collision (ground + collider primitives)
             computeShader.Dispatch(_kernelSolveGround, particleGroups, 1, 1);
             if (sphereColliderCount  > 0) computeShader.Dispatch(_kernelSolveSphere,  particleGroups, 1, 1);
             if (capsuleColliderCount > 0) computeShader.Dispatch(_kernelSolveCapsule, particleGroups, 1, 1);
             if (boxColliderCount     > 0) computeShader.Dispatch(_kernelSolveBox,     particleGroups, 1, 1);
 
-            // 4. Update velocities
+            // 5. Update velocities
             computeShader.Dispatch(_kernelUpdateVelocity, particleGroups, 1, 1);
         }
         _swSubsteps.Stop();
