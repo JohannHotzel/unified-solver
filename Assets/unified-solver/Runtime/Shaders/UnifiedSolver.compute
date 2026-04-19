@@ -7,7 +7,7 @@
 //
 // Per substep (n times per frame):
 //   Predict → ClearDeltas → SolveDistance → SolveContact → ApplyDeltas
-//   → SolveGround → SolveSphere → SolveCapsule → SolveBox → UpdateVelocity
+//   → SolveGround → SolveSphere → SolveCapsule → SolveBox → SolveRigidBody → UpdateVelocity
 
 #pragma kernel Predict
 #pragma kernel ClearDeltas
@@ -773,7 +773,7 @@ void SolveRigidBody(uint3 id : SV_DispatchThreadID)
     // ── Phase 3: extract rotation (Müller/Bender 2016, Eq. 7) ──
     float4 q = rb.quaternion;
     [unroll]
-    for (int iter = 0; iter < 4; iter++)
+    for (int iter = 0; iter < 20; iter++)
     {
         float3x3 R = QuatToMatrix(q);
         // Column vectors of R (HLSL matrix is row-major: R[row][col])
@@ -782,10 +782,10 @@ void SolveRigidBody(uint3 id : SV_DispatchThreadID)
         float3 r2 = float3(R._m02, R._m12, R._m22);
 
         float3 num   = cross(r0, Ac0) + cross(r1, Ac1) + cross(r2, Ac2);
-        float  den   = abs(dot(r0, Ac0) + dot(r1, Ac1) + dot(r2, Ac2)) + 1e-9;
+        float  den   = abs(dot(r0, Ac0) + dot(r1, Ac1) + dot(r2, Ac2)) + 1e-12;
         float3 omega = num / den;
         float  w     = length(omega);
-        if (w < 1e-9) break;
+        if (w < 1e-12) break;
 
         float3 axis  = omega / w;
         float  halfW = w * 0.5;

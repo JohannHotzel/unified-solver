@@ -53,7 +53,7 @@ public class RigidCubeGenerator : MonoBehaviour
             indices[write++] = idx;
         }
 
-        int rigidID = manager.AddRigidBody(indices, rot);
+        int rigidID = manager.AddRigidBody(indices);
         if (rigidID < 0)
         {
             Debug.LogError("RigidCubeGenerator: AddRigidBody failed.");
@@ -81,9 +81,9 @@ public class RigidCubeGenerator : MonoBehaviour
         );
 
         Gizmos.matrix = Matrix4x4.TRS(transform.position, transform.rotation, Vector3.one);
-        Gizmos.color  = selected ? new Color(1f, 0.7f, 0.4f, 0.25f) : new Color(1f, 0.6f, 0.3f, 0.15f);
+        Gizmos.color = selected ? new Color(0.4f, 0.7f, 1f, 0.25f) : new Color(0.3f, 0.6f, 1f, 0.15f);
         Gizmos.DrawCube(Vector3.zero, size);
-        Gizmos.color  = selected ? new Color(1f, 0.7f, 0.4f, 1f) : new Color(1f, 0.6f, 0.3f, 0.6f);
+        Gizmos.color = selected ? new Color(0.4f, 0.7f, 1f, 1f) : new Color(0.3f, 0.6f, 1f, 0.6f);
         Gizmos.DrawWireCube(Vector3.zero, size);
     }
 

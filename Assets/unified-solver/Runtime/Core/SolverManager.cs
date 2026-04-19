@@ -55,7 +55,7 @@ public class SolverManager : MonoBehaviour
 
     [Header("Friction")]
     [Tooltip("Static friction (mu_s): tangential motion below mu_s * penetration is fully stopped.")]
-    [Range(0f, 2f)] public float frictionStatic  = 0.4f;
+    [Range(0f, 2f)] public float frictionStatic = 0.4f;
     [Tooltip("Kinetic friction (mu_k): caps tangential correction at mu_k * penetration. Keep <= mu_s.")]
     [Range(0f, 2f)] public float frictionKinetic = 0.2f;
 
@@ -85,36 +85,36 @@ public class SolverManager : MonoBehaviour
 
     // CPU-side mirror data
     List<ParticleGPU> _particles = new List<ParticleGPU>();
-    ParticleGPU[]     _particleArray;
-    bool              _particlesDirty = true;
+    ParticleGPU[] _particleArray;
+    bool _particlesDirty = true;
 
     List<DistanceConstraintGPU> _constraints = new List<DistanceConstraintGPU>();
-    DistanceConstraintGPU[]     _constraintArray;
-    bool                        _constraintsDirty = true;
+    DistanceConstraintGPU[] _constraintArray;
+    bool _constraintsDirty = true;
 
     int _activeCount = 0;
     int _constraintCount = 0;
 
     // Registered world colliders
-    List<SolverSphereCollider>  _sphereColliders  = new List<SolverSphereCollider>();
-    SphereColliderGPU[]         _sphereColliderArray;
+    List<SolverSphereCollider> _sphereColliders = new List<SolverSphereCollider>();
+    SphereColliderGPU[] _sphereColliderArray;
 
     List<SolverCapsuleCollider> _capsuleColliders = new List<SolverCapsuleCollider>();
-    CapsuleColliderGPU[]        _capsuleColliderArray;
+    CapsuleColliderGPU[] _capsuleColliderArray;
 
-    List<SolverBoxCollider>     _boxColliders     = new List<SolverBoxCollider>();
-    BoxColliderGPU[]            _boxColliderArray;
+    List<SolverBoxCollider> _boxColliders = new List<SolverBoxCollider>();
+    BoxColliderGPU[] _boxColliderArray;
 
     // Rigid bodies
-    List<RigidBodyGPU> _rigidBodies       = new List<RigidBodyGPU>();
-    RigidBodyGPU[]     _rigidBodyArray;
-    List<int>          _rigidParticleIndexList = new List<int>();
-    int[]              _rigidParticleIndexArray;
-    List<Vector3>      _rigidRestOffsetList    = new List<Vector3>();
-    Vector3[]          _rigidRestOffsetArray;
-    int                _rigidBodyCount       = 0;
-    int                _rigidParticleRefCount = 0;
-    bool               _rigidBodiesDirty     = true;
+    List<RigidBodyGPU> _rigidBodies = new List<RigidBodyGPU>();
+    RigidBodyGPU[] _rigidBodyArray;
+    List<int> _rigidParticleIndexList = new List<int>();
+    int[] _rigidParticleIndexArray;
+    List<Vector3> _rigidRestOffsetList = new List<Vector3>();
+    Vector3[] _rigidRestOffsetArray;
+    int _rigidBodyCount = 0;
+    int _rigidParticleRefCount = 0;
+    bool _rigidBodiesDirty = true;
 
     // Kernel IDs
     int _kernelPredict;
@@ -130,15 +130,16 @@ public class SolverManager : MonoBehaviour
     int _kernelClearHash;
     int _kernelBuildHash;
     int _kernelSolveRigidBody;
+
     // CPU-side timing breakdown (rough — Dispatch is async so this is mostly
     // command submission cost; useful as a relative indicator in the editor).
-    Stopwatch _swTotal   = new Stopwatch();
-    Stopwatch _swUpload  = new Stopwatch();
-    Stopwatch _swHash    = new Stopwatch();
+    Stopwatch _swTotal = new Stopwatch();
+    Stopwatch _swUpload = new Stopwatch();
+    Stopwatch _swHash = new Stopwatch();
     Stopwatch _swSubsteps = new Stopwatch();
-    public double LastFrameTotalMs    { get; private set; }
-    public double LastFrameUploadMs   { get; private set; }
-    public double LastFrameHashMs     { get; private set; }
+    public double LastFrameTotalMs { get; private set; }
+    public double LastFrameUploadMs { get; private set; }
+    public double LastFrameHashMs { get; private set; }
     public double LastFrameSubstepsMs { get; private set; }
 
     void Awake()
@@ -153,40 +154,41 @@ public class SolverManager : MonoBehaviour
 
     void Start()
     {
-        _kernelPredict        = computeShader.FindKernel("Predict");
-        _kernelClearDeltas    = computeShader.FindKernel("ClearDeltas");
-        _kernelSolveDistance  = computeShader.FindKernel("SolveDistance");
-        _kernelSolveContact   = computeShader.FindKernel("SolveContact");
-        _kernelApplyDeltas    = computeShader.FindKernel("ApplyDeltas");
-        _kernelSolveGround    = computeShader.FindKernel("SolveGround");
-        _kernelSolveSphere    = computeShader.FindKernel("SolveSphere");
-        _kernelSolveCapsule   = computeShader.FindKernel("SolveCapsule");
-        _kernelSolveBox       = computeShader.FindKernel("SolveBox");
+        _kernelPredict = computeShader.FindKernel("Predict");
+        _kernelClearDeltas = computeShader.FindKernel("ClearDeltas");
+        _kernelSolveDistance = computeShader.FindKernel("SolveDistance");
+        _kernelSolveContact = computeShader.FindKernel("SolveContact");
+        _kernelApplyDeltas = computeShader.FindKernel("ApplyDeltas");
+        _kernelSolveGround = computeShader.FindKernel("SolveGround");
+        _kernelSolveSphere = computeShader.FindKernel("SolveSphere");
+        _kernelSolveCapsule = computeShader.FindKernel("SolveCapsule");
+        _kernelSolveBox = computeShader.FindKernel("SolveBox");
         _kernelUpdateVelocity = computeShader.FindKernel("UpdateVelocity");
-        _kernelClearHash      = computeShader.FindKernel("ClearHash");
-        _kernelBuildHash      = computeShader.FindKernel("BuildHash");
+        _kernelClearHash = computeShader.FindKernel("ClearHash");
+        _kernelBuildHash = computeShader.FindKernel("BuildHash");
         _kernelSolveRigidBody = computeShader.FindKernel("SolveRigidBody");
-        _particleBuffer        = new ComputeBuffer(maxParticles,        SolverData.ParticleStride);
-        _constraintBuffer      = new ComputeBuffer(maxConstraints,      SolverData.DistanceConstraintStride);
-        _deltaBuffer           = new ComputeBuffer(maxParticles,        SolverData.DeltaPosStride);
-        _constraintCountBuffer = new ComputeBuffer(maxParticles,        SolverData.IntStride);
-        _sphereColliderBuffer  = new ComputeBuffer(maxSphereColliders,  SolverData.SphereColliderStride);
+        
+        _particleBuffer = new ComputeBuffer(maxParticles, SolverData.ParticleStride);
+        _constraintBuffer = new ComputeBuffer(maxConstraints, SolverData.DistanceConstraintStride);
+        _deltaBuffer = new ComputeBuffer(maxParticles, SolverData.DeltaPosStride);
+        _constraintCountBuffer = new ComputeBuffer(maxParticles, SolverData.IntStride);
+        _sphereColliderBuffer = new ComputeBuffer(maxSphereColliders, SolverData.SphereColliderStride);
         _capsuleColliderBuffer = new ComputeBuffer(maxCapsuleColliders, SolverData.CapsuleColliderStride);
-        _boxColliderBuffer     = new ComputeBuffer(maxBoxColliders,     SolverData.BoxColliderStride);
-        _hashHeadBuffer        = new ComputeBuffer(tableSize,           SolverData.IntStride);
-        _hashNextBuffer        = new ComputeBuffer(maxParticles,        SolverData.IntStride);
-        _rigidBodyBuffer          = new ComputeBuffer(maxRigidBodies,       SolverData.RigidBodyStride);
+        _boxColliderBuffer = new ComputeBuffer(maxBoxColliders, SolverData.BoxColliderStride);
+        _hashHeadBuffer = new ComputeBuffer(tableSize, SolverData.IntStride);
+        _hashNextBuffer = new ComputeBuffer(maxParticles, SolverData.IntStride);
+        _rigidBodyBuffer = new ComputeBuffer(maxRigidBodies, SolverData.RigidBodyStride);
         _rigidParticleIndexBuffer = new ComputeBuffer(maxRigidParticleRefs, SolverData.IntStride);
-        _rigidRestOffsetBuffer    = new ComputeBuffer(maxRigidParticleRefs, SolverData.Vec3Stride);
+        _rigidRestOffsetBuffer = new ComputeBuffer(maxRigidParticleRefs, SolverData.Vec3Stride);
 
-        _particleArray           = new ParticleGPU[maxParticles];
-        _constraintArray         = new DistanceConstraintGPU[maxConstraints];
-        _sphereColliderArray     = new SphereColliderGPU[maxSphereColliders];
-        _capsuleColliderArray    = new CapsuleColliderGPU[maxCapsuleColliders];
-        _boxColliderArray        = new BoxColliderGPU[maxBoxColliders];
-        _rigidBodyArray          = new RigidBodyGPU[maxRigidBodies];
+        _particleArray = new ParticleGPU[maxParticles];
+        _constraintArray = new DistanceConstraintGPU[maxConstraints];
+        _sphereColliderArray = new SphereColliderGPU[maxSphereColliders];
+        _capsuleColliderArray = new CapsuleColliderGPU[maxCapsuleColliders];
+        _boxColliderArray = new BoxColliderGPU[maxBoxColliders];
+        _rigidBodyArray = new RigidBodyGPU[maxRigidBodies];
         _rigidParticleIndexArray = new int[maxRigidParticleRefs];
-        _rigidRestOffsetArray    = new Vector3[maxRigidParticleRefs];
+        _rigidRestOffsetArray = new Vector3[maxRigidParticleRefs];
     }
 
     void OnDestroy()
@@ -221,12 +223,12 @@ public class SolverManager : MonoBehaviour
 
         var p = new ParticleGPU
         {
-            position     = position,
-            velocity     = velocity,
+            position = position,
+            velocity = velocity,
             prevPosition = position,
-            invMass      = mass > 0 ? 1f / mass : 0f,
-            phase        = phase,
-            color        = new Vector3(color.r, color.g, color.b)
+            invMass = mass > 0 ? 1f / mass : 0f,
+            phase = phase,
+            color = new Vector3(color.r, color.g, color.b)
         };
 
         if (_activeCount < _particles.Count)
@@ -251,12 +253,12 @@ public class SolverManager : MonoBehaviour
 
         var c = new DistanceConstraintGPU
         {
-            particleA  = particleA,
-            particleB  = particleB,
+            particleA = particleA,
+            particleB = particleB,
             restLength = Vector3.Distance(posA, posB),
             compliance = compliance,
             breakForce = breakForce,
-            damping    = damping
+            damping = damping
         };
 
         if (_constraintCount < _constraints.Count)
@@ -274,17 +276,13 @@ public class SolverManager : MonoBehaviour
         return _particles[index].position;
     }
 
-    public int AddRigidBody(int[] particleIndices)
-        => AddRigidBody(particleIndices, Quaternion.identity);
-
     // Register a set of existing particles as a rigid body.
-    // Rest center of mass is computed from the current particle positions.
-    // Per-particle rest offsets q_i are stored in the rigid body's local
-    // frame (unrotated), i.e. q_i = inverse(initialRotation) * (x_i - x_cm^0).
-    // The initial quaternion carries the body's starting world orientation
-    // and persists across frames as warm-start for the Müller/Bender
-    // rotation extraction.
-    public int AddRigidBody(int[] particleIndices, Quaternion initialRotation)
+    // Rest center of mass and rest offsets are captured directly from the
+    // current world-space particle positions: q_i = x_i - x_cm^0. Any
+    // initial orientation is already baked into the particle layout, so
+    // shape matching starts with q = identity and extracts rotation
+    // relative to the stored rest pose.
+    public int AddRigidBody(int[] particleIndices)
     {
         if (particleIndices == null || particleIndices.Length == 0)
         {
@@ -302,13 +300,13 @@ public class SolverManager : MonoBehaviour
             return -1;
         }
 
-        Vector3 xcm0      = Vector3.zero;
-        float   totalMass = 0f;
+        Vector3 xcm0 = Vector3.zero;
+        float totalMass = 0f;
         for (int i = 0; i < particleIndices.Length; i++)
         {
             var p = _particles[particleIndices[i]];
             float m = p.invMass > 0f ? 1f / p.invMass : 0f;
-            xcm0      += m * p.position;
+            xcm0 += m * p.position;
             totalMass += m;
         }
         if (totalMass < 1e-9f)
@@ -318,22 +316,17 @@ public class SolverManager : MonoBehaviour
         }
         xcm0 /= totalMass;
 
-        // Store q_i in the body's local (unrotated) frame so that
-        //   goal_i = R * q_i + x_cm
-        // reproduces the world position at t=0 when R == initialRotation.
-        Quaternion invRot = Quaternion.Inverse(initialRotation);
-
         int offset = _rigidParticleRefCount;
         for (int i = 0; i < particleIndices.Length; i++)
         {
-            int     pIdx       = particleIndices[i];
-            Vector3 restOffset = invRot * (_particles[pIdx].position - xcm0);
+            int pIdx = particleIndices[i];
+            Vector3 restOffset = _particles[pIdx].position - xcm0;
 
             int slot = offset + i;
             if (slot < _rigidParticleIndexList.Count)
             {
                 _rigidParticleIndexList[slot] = pIdx;
-                _rigidRestOffsetList[slot]    = restOffset;
+                _rigidRestOffsetList[slot] = restOffset;
             }
             else
             {
@@ -345,8 +338,8 @@ public class SolverManager : MonoBehaviour
         var rb = new RigidBodyGPU
         {
             particleOffset = offset,
-            particleCount  = particleIndices.Length,
-            quaternion     = initialRotation
+            particleCount = particleIndices.Length,
+            quaternion = Quaternion.identity
         };
 
         if (_rigidBodyCount < _rigidBodies.Count)
@@ -355,7 +348,7 @@ public class SolverManager : MonoBehaviour
             _rigidBodies.Add(rb);
 
         _rigidParticleRefCount += particleIndices.Length;
-        _rigidBodiesDirty       = true;
+        _rigidBodiesDirty = true;
         return _rigidBodyCount++;
     }
 
@@ -385,13 +378,13 @@ public class SolverManager : MonoBehaviour
         _rigidBodies.Clear();
         _rigidParticleIndexList.Clear();
         _rigidRestOffsetList.Clear();
-        _activeCount           = 0;
-        _constraintCount       = 0;
-        _rigidBodyCount        = 0;
+        _activeCount = 0;
+        _constraintCount = 0;
+        _rigidBodyCount = 0;
         _rigidParticleRefCount = 0;
-        _particlesDirty        = true;
-        _constraintsDirty      = true;
-        _rigidBodiesDirty      = true;
+        _particlesDirty = true;
+        _constraintsDirty = true;
+        _rigidBodiesDirty = true;
         PhaseManager.Reset();
     }
 
@@ -447,14 +440,14 @@ public class SolverManager : MonoBehaviour
     // ─────────────────────────────────────────────
     // Public accessors
     // ─────────────────────────────────────────────
-    public ComputeBuffer ParticleBuffer    => _particleBuffer;
-    public ComputeBuffer ConstraintBuffer  => _constraintBuffer;
-    public int ActiveCount                 => _activeCount;
-    public int ConstraintCount             => _constraintCount;
-    public int SphereColliderCount         => _sphereColliders.Count;
-    public int CapsuleColliderCount        => _capsuleColliders.Count;
-    public int BoxColliderCount            => _boxColliders.Count;
-    public int RigidBodyCount              => _rigidBodyCount;
+    public ComputeBuffer ParticleBuffer => _particleBuffer;
+    public ComputeBuffer ConstraintBuffer => _constraintBuffer;
+    public int ActiveCount => _activeCount;
+    public int ConstraintCount => _constraintCount;
+    public int SphereColliderCount => _sphereColliders.Count;
+    public int CapsuleColliderCount => _capsuleColliders.Count;
+    public int BoxColliderCount => _boxColliders.Count;
+    public int RigidBodyCount => _rigidBodyCount;
 
     // ─────────────────────────────────────────────
     // GPU upload helpers
@@ -485,7 +478,7 @@ public class SolverManager : MonoBehaviour
         for (int i = 0; i < _rigidParticleRefCount; i++)
         {
             _rigidParticleIndexArray[i] = _rigidParticleIndexList[i];
-            _rigidRestOffsetArray[i]    = _rigidRestOffsetList[i];
+            _rigidRestOffsetArray[i] = _rigidRestOffsetList[i];
         }
         if (_rigidParticleRefCount > 0)
         {
@@ -521,7 +514,7 @@ public class SolverManager : MonoBehaviour
                 pointA = col.WorldPointA,
                 radius = col.radius,
                 pointB = col.WorldPointB,
-                _pad0  = 0f
+                _pad0 = 0f
             };
         }
         _capsuleColliderBuffer.SetData(_capsuleColliderArray, 0, 0, Mathf.Max(count, 1));
@@ -535,11 +528,11 @@ public class SolverManager : MonoBehaviour
             var col = _boxColliders[i];
             _boxColliderArray[i] = new BoxColliderGPU
             {
-                center      = col.WorldCenter,
+                center = col.WorldCenter,
                 halfExtents = col.HalfExtents,
-                axisX       = col.WorldAxisX,
-                axisY       = col.WorldAxisY,
-                axisZ       = col.WorldAxisZ
+                axisX = col.WorldAxisX,
+                axisY = col.WorldAxisY,
+                axisZ = col.WorldAxisZ
             };
         }
         _boxColliderBuffer.SetData(_boxColliderArray, 0, 0, Mathf.Max(count, 1));
@@ -556,79 +549,79 @@ public class SolverManager : MonoBehaviour
         _swTotal.Restart();
         _swUpload.Restart();
 
-        if (_particlesDirty)    UploadParticlesToGPU();
-        if (_constraintsDirty)  UploadConstraintsToGPU();
-        if (_rigidBodiesDirty)  UploadRigidBodiesToGPU();
+        if (_particlesDirty) UploadParticlesToGPU();
+        if (_constraintsDirty) UploadConstraintsToGPU();
+        if (_rigidBodiesDirty) UploadRigidBodiesToGPU();
 
-        int sphereColliderCount  = Mathf.Min(_sphereColliders.Count,  maxSphereColliders);
+        int sphereColliderCount = Mathf.Min(_sphereColliders.Count, maxSphereColliders);
         int capsuleColliderCount = Mathf.Min(_capsuleColliders.Count, maxCapsuleColliders);
-        int boxColliderCount     = Mathf.Min(_boxColliders.Count,     maxBoxColliders);
+        int boxColliderCount = Mathf.Min(_boxColliders.Count, maxBoxColliders);
 
-        if (sphereColliderCount  > 0) UploadSphereCollidersToGPU();
+        if (sphereColliderCount > 0) UploadSphereCollidersToGPU();
         if (capsuleColliderCount > 0) UploadCapsuleCollidersToGPU();
-        if (boxColliderCount     > 0) UploadBoxCollidersToGPU();
+        if (boxColliderCount > 0) UploadBoxCollidersToGPU();
 
         _swUpload.Stop();
 
         float frameDt = Time.fixedDeltaTime;
-        float subDt   = frameDt / substeps;
+        float subDt = frameDt / substeps;
 
-        int particleGroups   = Mathf.CeilToInt(_activeCount / 256f);
+        int particleGroups = Mathf.CeilToInt(_activeCount / 256f);
         int constraintGroups = Mathf.CeilToInt(_constraintCount / 256f);
-        int tableGroups      = Mathf.CeilToInt(tableSize / 256f);
+        int tableGroups = Mathf.CeilToInt(tableSize / 256f);
 
         // Bind buffers
-        computeShader.SetBuffer(_kernelPredict,        "_Particles",        _particleBuffer);
-        computeShader.SetBuffer(_kernelSolveGround,    "_Particles",        _particleBuffer);
-        computeShader.SetBuffer(_kernelUpdateVelocity, "_Particles",        _particleBuffer);
-        computeShader.SetBuffer(_kernelSolveDistance,  "_Particles",        _particleBuffer);
-        computeShader.SetBuffer(_kernelApplyDeltas,    "_Particles",        _particleBuffer);
-        computeShader.SetBuffer(_kernelSolveSphere,    "_Particles",        _particleBuffer);
+        computeShader.SetBuffer(_kernelPredict, "_Particles", _particleBuffer);
+        computeShader.SetBuffer(_kernelSolveGround, "_Particles", _particleBuffer);
+        computeShader.SetBuffer(_kernelUpdateVelocity, "_Particles", _particleBuffer);
+        computeShader.SetBuffer(_kernelSolveDistance, "_Particles", _particleBuffer);
+        computeShader.SetBuffer(_kernelApplyDeltas, "_Particles", _particleBuffer);
+        computeShader.SetBuffer(_kernelSolveSphere, "_Particles", _particleBuffer);
 
-        computeShader.SetBuffer(_kernelSolveDistance,  "_Constraints",      _constraintBuffer);
-        computeShader.SetBuffer(_kernelSolveDistance,  "_DeltaPos",         _deltaBuffer);
-        computeShader.SetBuffer(_kernelSolveDistance,  "_ConstraintCounts", _constraintCountBuffer);
+        computeShader.SetBuffer(_kernelSolveDistance, "_Constraints", _constraintBuffer);
+        computeShader.SetBuffer(_kernelSolveDistance, "_DeltaPos", _deltaBuffer);
+        computeShader.SetBuffer(_kernelSolveDistance, "_ConstraintCounts", _constraintCountBuffer);
 
-        computeShader.SetBuffer(_kernelApplyDeltas,    "_DeltaPos",         _deltaBuffer);
-        computeShader.SetBuffer(_kernelApplyDeltas,    "_ConstraintCounts", _constraintCountBuffer);
+        computeShader.SetBuffer(_kernelApplyDeltas, "_DeltaPos", _deltaBuffer);
+        computeShader.SetBuffer(_kernelApplyDeltas, "_ConstraintCounts", _constraintCountBuffer);
 
-        computeShader.SetBuffer(_kernelClearDeltas,    "_DeltaPos",         _deltaBuffer);
-        computeShader.SetBuffer(_kernelClearDeltas,    "_ConstraintCounts", _constraintCountBuffer);
+        computeShader.SetBuffer(_kernelClearDeltas, "_DeltaPos", _deltaBuffer);
+        computeShader.SetBuffer(_kernelClearDeltas, "_ConstraintCounts", _constraintCountBuffer);
 
-        computeShader.SetBuffer(_kernelSolveSphere,    "_SphereColliders",  _sphereColliderBuffer);
-        computeShader.SetBuffer(_kernelSolveCapsule,   "_Particles",        _particleBuffer);
-        computeShader.SetBuffer(_kernelSolveCapsule,   "_CapsuleColliders", _capsuleColliderBuffer);
-        computeShader.SetBuffer(_kernelSolveBox,       "_Particles",        _particleBuffer);
-        computeShader.SetBuffer(_kernelSolveBox,       "_BoxColliders",     _boxColliderBuffer);
+        computeShader.SetBuffer(_kernelSolveSphere, "_SphereColliders", _sphereColliderBuffer);
+        computeShader.SetBuffer(_kernelSolveCapsule, "_Particles", _particleBuffer);
+        computeShader.SetBuffer(_kernelSolveCapsule, "_CapsuleColliders", _capsuleColliderBuffer);
+        computeShader.SetBuffer(_kernelSolveBox, "_Particles", _particleBuffer);
+        computeShader.SetBuffer(_kernelSolveBox, "_BoxColliders", _boxColliderBuffer);
 
-        computeShader.SetBuffer(_kernelClearHash,      "_HashHead",         _hashHeadBuffer);
-        computeShader.SetBuffer(_kernelBuildHash,      "_Particles",        _particleBuffer);
-        computeShader.SetBuffer(_kernelBuildHash,      "_HashHead",         _hashHeadBuffer);
-        computeShader.SetBuffer(_kernelBuildHash,      "_HashNext",         _hashNextBuffer);
-        computeShader.SetBuffer(_kernelSolveRigidBody, "_Particles",            _particleBuffer);
-        computeShader.SetBuffer(_kernelSolveRigidBody, "_RigidBodies",          _rigidBodyBuffer);
+        computeShader.SetBuffer(_kernelClearHash, "_HashHead", _hashHeadBuffer);
+        computeShader.SetBuffer(_kernelBuildHash, "_Particles", _particleBuffer);
+        computeShader.SetBuffer(_kernelBuildHash, "_HashHead", _hashHeadBuffer);
+        computeShader.SetBuffer(_kernelBuildHash, "_HashNext", _hashNextBuffer);
+        computeShader.SetBuffer(_kernelSolveRigidBody, "_Particles", _particleBuffer);
+        computeShader.SetBuffer(_kernelSolveRigidBody, "_RigidBodies", _rigidBodyBuffer);
         computeShader.SetBuffer(_kernelSolveRigidBody, "_RigidParticleIndices", _rigidParticleIndexBuffer);
-        computeShader.SetBuffer(_kernelSolveRigidBody, "_RigidRestOffsets",     _rigidRestOffsetBuffer);
-        computeShader.SetBuffer(_kernelSolveContact,   "_Particles",        _particleBuffer);
-        computeShader.SetBuffer(_kernelSolveContact,   "_HashHead",         _hashHeadBuffer);
-        computeShader.SetBuffer(_kernelSolveContact,   "_HashNext",         _hashNextBuffer);
-        computeShader.SetBuffer(_kernelSolveContact,   "_DeltaPos",         _deltaBuffer);
-        computeShader.SetBuffer(_kernelSolveContact,   "_ConstraintCounts", _constraintCountBuffer);
+        computeShader.SetBuffer(_kernelSolveRigidBody, "_RigidRestOffsets", _rigidRestOffsetBuffer);
+        computeShader.SetBuffer(_kernelSolveContact, "_Particles", _particleBuffer);
+        computeShader.SetBuffer(_kernelSolveContact, "_HashHead", _hashHeadBuffer);
+        computeShader.SetBuffer(_kernelSolveContact, "_HashNext", _hashNextBuffer);
+        computeShader.SetBuffer(_kernelSolveContact, "_DeltaPos", _deltaBuffer);
+        computeShader.SetBuffer(_kernelSolveContact, "_ConstraintCounts", _constraintCountBuffer);
 
         // Constants
-        computeShader.SetInt("_ParticleCount",        _activeCount);
-        computeShader.SetInt("_ConstraintCount",      _constraintCount);
-        computeShader.SetInt("_RigidBodyCount",       _rigidBodyCount);
-        computeShader.SetInt("_SphereColliderCount",  sphereColliderCount);
+        computeShader.SetInt("_ParticleCount", _activeCount);
+        computeShader.SetInt("_ConstraintCount", _constraintCount);
+        computeShader.SetInt("_RigidBodyCount", _rigidBodyCount);
+        computeShader.SetInt("_SphereColliderCount", sphereColliderCount);
         computeShader.SetInt("_CapsuleColliderCount", capsuleColliderCount);
-        computeShader.SetInt("_BoxColliderCount",     boxColliderCount);
+        computeShader.SetInt("_BoxColliderCount", boxColliderCount);
         computeShader.SetVector("_Gravity", gravity);
-        computeShader.SetFloat("_GroundY",         groundY);
-        computeShader.SetFloat("_SOR",             sor);
-        computeShader.SetFloat("_Damping",         damping);
-        computeShader.SetFloat("_CellSize",        cellSize);
-        computeShader.SetInt("_TableSize",         tableSize);
-        computeShader.SetFloat("_FrictionStatic",  frictionStatic);
+        computeShader.SetFloat("_GroundY", groundY);
+        computeShader.SetFloat("_SOR", sor);
+        computeShader.SetFloat("_Damping", damping);
+        computeShader.SetFloat("_CellSize", cellSize);
+        computeShader.SetInt("_TableSize", tableSize);
+        computeShader.SetFloat("_FrictionStatic", frictionStatic);
         computeShader.SetFloat("_FrictionKinetic", frictionKinetic);
         computeShader.SetFloat("_MaxDepenetrationSpeed", maxDepenetrationSpeed);
         computeShader.SetFloat("_ParticleRadius", particleRadius);
@@ -662,18 +655,18 @@ public class SolverManager : MonoBehaviour
 
             computeShader.Dispatch(_kernelApplyDeltas, particleGroups, 1, 1);
 
-            // 3. Rigid body shape-matching projection (Müller 2005 / Müller-Bender 2016)
+            // 3. World collision (ground + collider primitives)
+            computeShader.Dispatch(_kernelSolveGround, particleGroups, 1, 1);
+            if (sphereColliderCount > 0) computeShader.Dispatch(_kernelSolveSphere, particleGroups, 1, 1);
+            if (capsuleColliderCount > 0) computeShader.Dispatch(_kernelSolveCapsule, particleGroups, 1, 1);
+            if (boxColliderCount > 0) computeShader.Dispatch(_kernelSolveBox, particleGroups, 1, 1);
+
+            // 4. Rigid body shape-matching projection (Müller 2005 / Müller-Bender 2016)
             if (_rigidBodyCount > 0)
             {
                 int rigidGroups = Mathf.CeilToInt(_rigidBodyCount / 64f);
                 computeShader.Dispatch(_kernelSolveRigidBody, rigidGroups, 1, 1);
             }
-
-            // 4. World collision (ground + collider primitives)
-            computeShader.Dispatch(_kernelSolveGround, particleGroups, 1, 1);
-            if (sphereColliderCount  > 0) computeShader.Dispatch(_kernelSolveSphere,  particleGroups, 1, 1);
-            if (capsuleColliderCount > 0) computeShader.Dispatch(_kernelSolveCapsule, particleGroups, 1, 1);
-            if (boxColliderCount     > 0) computeShader.Dispatch(_kernelSolveBox,     particleGroups, 1, 1);
 
             // 5. Update velocities
             computeShader.Dispatch(_kernelUpdateVelocity, particleGroups, 1, 1);
@@ -682,9 +675,9 @@ public class SolverManager : MonoBehaviour
 
         _swTotal.Stop();
 
-        LastFrameTotalMs    = _swTotal.Elapsed.TotalMilliseconds;
-        LastFrameUploadMs   = _swUpload.Elapsed.TotalMilliseconds;
-        LastFrameHashMs     = _swHash.Elapsed.TotalMilliseconds;
+        LastFrameTotalMs = _swTotal.Elapsed.TotalMilliseconds;
+        LastFrameUploadMs = _swUpload.Elapsed.TotalMilliseconds;
+        LastFrameHashMs = _swHash.Elapsed.TotalMilliseconds;
         LastFrameSubstepsMs = _swSubsteps.Elapsed.TotalMilliseconds;
     }
 }

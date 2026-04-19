@@ -81,7 +81,7 @@ public struct BoxColliderGPU
 // used as warm-start for the Müller/Bender rotation extraction.
 public struct RigidBodyGPU
 {
-    public int        particleOffset;
-    public int        particleCount;
+    public int particleOffset;
+    public int particleCount;
     public Quaternion quaternion;
 }
