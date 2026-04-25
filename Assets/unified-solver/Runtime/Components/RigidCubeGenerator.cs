@@ -53,7 +53,7 @@ public class RigidCubeGenerator : MonoBehaviour
             indices[write++] = idx;
         }
 
-        int rigidID = manager.AddRigidBody(indices);
+        int rigidID = manager.AddRigidBody(indices, origin, rot);
         if (rigidID < 0)
         {
             Debug.LogError("RigidCubeGenerator: AddRigidBody failed.");

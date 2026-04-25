@@ -116,6 +116,16 @@ public class SolverManager : MonoBehaviour
     int _rigidParticleRefCount = 0;
     bool _rigidBodiesDirty = true;
 
+    // CPU-only meta per rigid body, used to drive visual transforms.
+    // restOriginOffset = spawnOrigin - xcm0   (rest-frame vector from COM to mesh pivot)
+    // restRotation     = spawnRotation        (mesh rotation at spawn time)
+    struct RigidBodyMeta
+    {
+        public Vector3    restOriginOffset;
+        public Quaternion restRotation;
+    }
+    List<RigidBodyMeta> _rigidBodyMeta = new List<RigidBodyMeta>();
+
     // Kernel IDs
     int _kernelPredict;
     int _kernelClearDeltas;
@@ -282,7 +292,7 @@ public class SolverManager : MonoBehaviour
     // initial orientation is already baked into the particle layout, so
     // shape matching starts with q = identity and extracts rotation
     // relative to the stored rest pose.
-    public int AddRigidBody(int[] particleIndices)
+    public int AddRigidBody(int[] particleIndices, Vector3 spawnOrigin, Quaternion spawnRotation)
     {
         if (particleIndices == null || particleIndices.Length == 0)
         {
@@ -339,7 +349,8 @@ public class SolverManager : MonoBehaviour
         {
             particleOffset = offset,
             particleCount = particleIndices.Length,
-            quaternion = Quaternion.identity
+            quaternion = Quaternion.identity,
+            xcm = xcm0
         };
 
         if (_rigidBodyCount < _rigidBodies.Count)
@@ -347,9 +358,48 @@ public class SolverManager : MonoBehaviour
         else
             _rigidBodies.Add(rb);
 
+        var meta = new RigidBodyMeta
+        {
+            restOriginOffset = spawnOrigin - xcm0,
+            restRotation     = spawnRotation
+        };
+        if (_rigidBodyCount < _rigidBodyMeta.Count)
+            _rigidBodyMeta[_rigidBodyCount] = meta;
+        else
+            _rigidBodyMeta.Add(meta);
+
         _rigidParticleRefCount += particleIndices.Length;
         _rigidBodiesDirty = true;
         return _rigidBodyCount++;
+    }
+
+    // Read back the rigid body buffer from the GPU. Synchronous — small
+    // buffer (a few hundred entries at most), called once per frame.
+    void ReadbackRigidBodies()
+    {
+        if (_rigidBodyCount == 0) return;
+        _rigidBodyBuffer.GetData(_rigidBodyArray, 0, 0, _rigidBodyCount);
+        for (int i = 0; i < _rigidBodyCount; i++)
+            _rigidBodies[i] = _rigidBodyArray[i];
+    }
+
+    // Current world-space pose of a rigid body's visual mesh.
+    // Composes the rotation extracted by shape matching (relative to rest)
+    // with the spawn transform stored in RigidBodyMeta.
+    public bool TryGetRigidBodyMeshPose(int rigidID, out Vector3 position, out Quaternion rotation)
+    {
+        if (rigidID < 0 || rigidID >= _rigidBodyCount)
+        {
+            position = Vector3.zero;
+            rotation = Quaternion.identity;
+            return false;
+        }
+        var rb   = _rigidBodies[rigidID];
+        var meta = _rigidBodyMeta[rigidID];
+        Quaternion q = rb.quaternion;
+        position = rb.xcm + q * meta.restOriginOffset;
+        rotation = q * meta.restRotation;
+        return true;
     }
 
     public void ReadbackParticles(ParticleGPU[] dest)
@@ -376,6 +426,7 @@ public class SolverManager : MonoBehaviour
         _particles.Clear();
         _constraints.Clear();
         _rigidBodies.Clear();
+        _rigidBodyMeta.Clear();
         _rigidParticleIndexList.Clear();
         _rigidRestOffsetList.Clear();
         _activeCount = 0;
@@ -672,6 +723,9 @@ public class SolverManager : MonoBehaviour
             computeShader.Dispatch(_kernelUpdateVelocity, particleGroups, 1, 1);
         }
         _swSubsteps.Stop();
+
+        // Sync rigid body state back so visual transforms can follow this frame.
+        ReadbackRigidBodies();
 
         _swTotal.Stop();
 

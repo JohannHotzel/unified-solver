@@ -90,12 +90,13 @@ struct BoxCollider
 };
 StructuredBuffer<BoxCollider> _BoxColliders;
 
-// Rigid body data (24 bytes). Matches RigidBodyGPU in SolverData.cs.
+// Rigid body data (36 bytes). Matches RigidBodyGPU in SolverData.cs.
 struct RigidBody
 {
     int    particleOffset;
     int    particleCount;
     float4 quaternion;   // (x, y, z, w), persists across frames as warm-start
+    float3 xcm;          // current world-space center of mass (written each substep)
 };
 RWStructuredBuffer<RigidBody> _RigidBodies;
 StructuredBuffer<int>         _RigidParticleIndices;  // flat: particle IDs per rigid
@@ -795,6 +796,7 @@ void SolveRigidBody(uint3 id : SV_DispatchThreadID)
     }
 
     _RigidBodies[rigidID].quaternion = q;
+    _RigidBodies[rigidID].xcm        = xcm;
 
     // ── Phase 4: apply goal positions directly (infinite stiffness) ──
     float3x3 Rfinal = QuatToMatrix(q);

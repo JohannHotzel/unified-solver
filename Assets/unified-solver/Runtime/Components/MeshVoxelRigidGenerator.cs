@@ -21,6 +21,9 @@ public class MeshVoxelRigidGenerator : MonoBehaviour
     // Cached for gizmo preview
     int _lastParticleCount = -1;
 
+    // Solver-side rigid body ID, used in LateUpdate to drive the mesh transform.
+    int _rigidID = -1;
+
     void Start()
     {
         Mesh mesh = ResolveMesh();
@@ -90,14 +93,24 @@ public class MeshVoxelRigidGenerator : MonoBehaviour
             return;
         }
 
-        int rigidID = manager.AddRigidBody(indices.ToArray());
+        int rigidID = manager.AddRigidBody(indices.ToArray(), origin, rot);
         if (rigidID < 0)
         {
             Debug.LogError("MeshVoxelRigidGenerator: AddRigidBody failed.");
             return;
         }
+        _rigidID = rigidID;
 
         Debug.Log($"MeshVoxelRigidGenerator: Voxelized '{mesh.name}' into {indices.Count} particles as rigid body #{rigidID}.");
+    }
+
+    void LateUpdate()
+    {
+        if (_rigidID < 0) return;
+        var manager = SolverManager.Instance;
+        if (manager == null) return;
+        if (manager.TryGetRigidBodyMeshPose(_rigidID, out Vector3 pos, out Quaternion rot))
+            transform.SetPositionAndRotation(pos, rot);
     }
 
     Mesh ResolveMesh()
