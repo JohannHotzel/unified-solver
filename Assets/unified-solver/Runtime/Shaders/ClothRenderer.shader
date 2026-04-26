@@ -21,7 +21,7 @@ Shader "UnifiedSolver/ClothRenderer"
             #pragma target 5.0
             #include "UnityCG.cginc"
 
-            // Must match ParticleGPU / Particle struct byte-for-byte (56 bytes).
+            // Must match ParticleGPU / Particle struct byte-for-byte (60 bytes).
             struct Particle
             {
                 float3 position;
@@ -30,6 +30,7 @@ Shader "UnifiedSolver/ClothRenderer"
                 float  invMass;
                 int    phase;
                 float3 color;
+                uint   visible;
             };
 
             StructuredBuffer<Particle> _Particles;
@@ -154,6 +155,7 @@ Shader "UnifiedSolver/ClothRenderer"
                 float  invMass;
                 int    phase;
                 float3 color;
+                uint   visible;
             };
 
             StructuredBuffer<Particle> _Particles;

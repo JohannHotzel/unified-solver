@@ -11,7 +11,7 @@ public static class SolverData
     public const float FP_SCALE = 100000.0f;
 
     // GPU buffer strides (bytes)
-    public const int ParticleStride            = 56; // 3*Vec3 + float + int + Vec3
+    public const int ParticleStride            = 60; // 3*Vec3 + float + int + Vec3 + uint
     public const int DistanceConstraintStride  = 24; // 2*int + 4*float
     public const int SphereColliderStride      = 16; // Vec3 + float
     public const int CapsuleColliderStride     = 32; // Vec3 + float + Vec3 + float
@@ -33,6 +33,7 @@ public struct ParticleGPU
     public float   invMass;
     public int     phase;
     public Vector3 color;
+    public uint    visible;   // 0 = hidden, non-zero = visible (render-only flag)
 }
 
 // XPBD distance constraint — 24 bytes.

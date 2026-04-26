@@ -36,6 +36,7 @@ struct Particle
     float  invMass;
     int    phase;
     float3 color;
+    uint   visible;
 };
 
 // ─────────────────────────────────────────────

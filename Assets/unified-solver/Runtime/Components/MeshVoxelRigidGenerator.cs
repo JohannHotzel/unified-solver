@@ -18,6 +18,10 @@ public class MeshVoxelRigidGenerator : MonoBehaviour
     public Color particleColor = new Color(0.3f, 0.6f, 1.0f);
     [Range(0f, 1f)] public float colorVariation = 0.15f;
 
+    [Header("Visualization")]
+    [Tooltip("Hide the underlying voxel particles (only the source mesh is rendered). Applied once at spawn time.")]
+    public bool hideParticles = true;
+
     // Cached for gizmo preview
     int _lastParticleCount = -1;
 
@@ -82,7 +86,7 @@ public class MeshVoxelRigidGenerator : MonoBehaviour
             Vector3 centered = localPos - bCenter;
             Vector3 world    = origin + rot * centered;
 
-            int idx = manager.AddParticle(world, Vector3.zero, particleMass, VariedColor(), phase);
+            int idx = manager.AddParticle(world, Vector3.zero, particleMass, VariedColor(), phase, !hideParticles);
             indices.Add(idx);
         }
 

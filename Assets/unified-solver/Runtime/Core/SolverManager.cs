@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
 
@@ -164,6 +165,12 @@ public class SolverManager : MonoBehaviour
 
     void Start()
     {
+        // Sanity check: CPU stride constant must match the actual struct size,
+        // otherwise GPU buffer reads/writes silently misalign.
+        int particleSize = Marshal.SizeOf<ParticleGPU>();
+        if (particleSize != SolverData.ParticleStride)
+            Debug.LogError($"SolverManager: ParticleStride mismatch — Marshal.SizeOf={particleSize}, ParticleStride={SolverData.ParticleStride}. Update SolverData and all shader Particle structs.");
+
         _kernelPredict = computeShader.FindKernel("Predict");
         _kernelClearDeltas = computeShader.FindKernel("ClearDeltas");
         _kernelSolveDistance = computeShader.FindKernel("SolveDistance");
@@ -223,7 +230,7 @@ public class SolverManager : MonoBehaviour
     // Public API — particles
     // ─────────────────────────────────────────────
 
-    public int AddParticle(Vector3 position, Vector3 velocity, float mass, Color color, int phase = PhaseManager.PhaseNone)
+    public int AddParticle(Vector3 position, Vector3 velocity, float mass, Color color, int phase = PhaseManager.PhaseNone, bool visible = true)
     {
         if (_activeCount >= maxParticles)
         {
@@ -238,7 +245,8 @@ public class SolverManager : MonoBehaviour
             prevPosition = position,
             invMass = mass > 0 ? 1f / mass : 0f,
             phase = phase,
-            color = new Vector3(color.r, color.g, color.b)
+            color = new Vector3(color.r, color.g, color.b),
+            visible = visible ? 1u : 0u
         };
 
         if (_activeCount < _particles.Count)
