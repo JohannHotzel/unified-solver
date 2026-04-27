@@ -27,6 +27,7 @@ Shader "UnifiedSolver/RopeRenderer"
                 float  invMass;
                 int    phase;
                 float3 color;
+                uint   visible;
             };
 
             StructuredBuffer<Particle> _Particles;

@@ -11,13 +11,15 @@ public static class SolverData
     public const float FP_SCALE = 100000.0f;
 
     // GPU buffer strides (bytes)
-    public const int ParticleStride            = 56; // 3*Vec3 + float + int + Vec3
+    public const int ParticleStride            = 60; // 3*Vec3 + float + int + Vec3 + uint
     public const int DistanceConstraintStride  = 24; // 2*int + 4*float
     public const int SphereColliderStride      = 16; // Vec3 + float
     public const int CapsuleColliderStride     = 32; // Vec3 + float + Vec3 + float
     public const int BoxColliderStride         = 60; // 5*Vec3
     public const int DeltaPosStride            = 12; // int3
     public const int IntStride                 = 4;
+    public const int Vec3Stride                = 12; // float3
+    public const int RigidBodyStride           = 36; // 2*int + Quaternion + Vec3
 }
 
 // Particle GPU layout — 56 bytes.
@@ -31,6 +33,7 @@ public struct ParticleGPU
     public float   invMass;
     public int     phase;
     public Vector3 color;
+    public uint    visible;   // 0 = hidden, non-zero = visible (render-only flag)
 }
 
 // XPBD distance constraint — 24 bytes.
@@ -69,4 +72,20 @@ public struct BoxColliderGPU
     public Vector3 axisX;
     public Vector3 axisY;
     public Vector3 axisZ;
+}
+
+// Rigid body GPU layout — 36 bytes.
+// Particles belonging to this body are stored in a separate flat index
+// buffer (_RigidParticleIndices) indexed by [particleOffset, particleOffset+particleCount).
+// Rest offsets q_i = x_i^0 - x_cm^0 live in _RigidRestOffsets, parallel
+// to the index buffer. The quaternion persists across frames and is
+// used as warm-start for the Müller/Bender rotation extraction.
+// xcm is written by the GPU each substep so the CPU can drive visual
+// transforms (mesh follows the rigid body).
+public struct RigidBodyGPU
+{
+    public int particleOffset;
+    public int particleCount;
+    public Quaternion quaternion;
+    public Vector3 xcm;
 }
