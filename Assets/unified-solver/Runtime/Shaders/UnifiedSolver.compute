@@ -7,7 +7,7 @@
 //
 // Per substep (n times per frame):
 //   Predict → ClearDeltas → SolveDistance → SolveContact → ApplyDeltas
-//   → SolveGround → SolveSphere → SolveCapsule → SolveBox → UpdateVelocity
+//   → SolveGround → SolveSphere → SolveCapsule → SolveBox → SolveRigidBody → UpdateVelocity
 
 #pragma kernel Predict
 #pragma kernel ClearDeltas
@@ -21,6 +21,7 @@
 #pragma kernel UpdateVelocity
 #pragma kernel ClearHash
 #pragma kernel BuildHash
+#pragma kernel SolveRigidBody
 
 // ─────────────────────────────────────────────
 // Particle data (60 bytes)
@@ -35,6 +36,7 @@ struct Particle
     float  invMass;
     int    phase;
     float3 color;
+    uint   visible;
 };
 
 // ─────────────────────────────────────────────
@@ -89,6 +91,18 @@ struct BoxCollider
 };
 StructuredBuffer<BoxCollider> _BoxColliders;
 
+// Rigid body data (36 bytes). Matches RigidBodyGPU in SolverData.cs.
+struct RigidBody
+{
+    int    particleOffset;
+    int    particleCount;
+    float4 quaternion;   // (x, y, z, w), persists across frames as warm-start
+    float3 xcm;          // current world-space center of mass (written each substep)
+};
+RWStructuredBuffer<RigidBody> _RigidBodies;
+StructuredBuffer<int>         _RigidParticleIndices;  // flat: particle IDs per rigid
+StructuredBuffer<float3>      _RigidRestOffsets;      // flat: q_i = x_i^0 - x_cm^0
+
 // ─────────────────────────────────────────────
 // Spatial hash buffers
 // ─────────────────────────────────────────────
@@ -114,6 +128,7 @@ float  _FrictionStatic;   // mu_s — Coulomb static  threshold (tangential / no
 float  _FrictionKinetic;  // mu_k — Coulomb kinetic scale     (tangential / normal, <= mu_s)
 float  _MaxDepenetrationSpeed;  // Clamp per-substep contact correction (Small Steps paper Eq. 10)
 float  _ParticleRadius;         // Global radius for all particles (Flex paper, section 3)
+uint   _RigidBodyCount;
 
 // Fixed-point precision. Must match SolverData.FP_SCALE.
 static const float FP_SCALE = 100000.0;
@@ -674,5 +689,125 @@ void SolveContact(uint3 id : SV_DispatchThreadID)
             }
             j = _HashNext[j];
         }
+    }
+}
+
+// ─────────────────────────────────────────────
+// Quaternion helpers (x, y, z, w layout — matches UnityEngine.Quaternion)
+// ─────────────────────────────────────────────
+float3x3 QuatToMatrix(float4 q)
+{
+    float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
+    float xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
+    float wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
+    return float3x3(
+        1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz),       2.0 * (xz + wy),
+        2.0 * (xy + wz),       1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx),
+        2.0 * (xz - wy),       2.0 * (yz + wx),       1.0 - 2.0 * (xx + yy)
+    );
+}
+
+float4 QuatMul(float4 a, float4 b)
+{
+    return float4(
+        a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+        a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+    );
+}
+
+// ─────────────────────────────────────────────
+// SolveRigidBody — shape matching projection (Müller 2005 + Müller/Bender 2016)
+//
+// One thread per rigid body. Loops over the body's particles serially
+// (simple version; parallel reduction is a later optimization).
+//
+// Phases:
+//   1. Compute current center of mass x_cm
+//   2. Compute covariance matrix A_pq = sum m_i (x_i - x_cm)(x_i^0 - x_cm^0)^T
+//   3. Extract rotation R via Müller/Bender iterative torque-equilibrium
+//      method, warm-started from the quaternion of the previous frame.
+//   4. Set each particle position to its goal g_i = R * q_i + x_cm
+//      (infinite stiffness — no XPBD compliance, direct projection).
+// ─────────────────────────────────────────────
+[numthreads(64,1,1)]
+void SolveRigidBody(uint3 id : SV_DispatchThreadID)
+{
+    uint rigidID = id.x;
+    if (rigidID >= _RigidBodyCount) return;
+
+    RigidBody rb = _RigidBodies[rigidID];
+    uint N       = (uint)rb.particleCount;
+    uint baseIdx = (uint)rb.particleOffset;
+
+    // ── Phase 1: center of mass ──
+    float3 xcm       = float3(0, 0, 0);
+    float  totalMass = 0.0;
+    for (uint i = 0; i < N; i++)
+    {
+        uint     pIdx = (uint)_RigidParticleIndices[baseIdx + i];
+        Particle p    = _Particles[pIdx];
+        float    m    = (p.invMass > 0.0) ? 1.0 / p.invMass : 0.0;
+        xcm       += m * p.position;
+        totalMass += m;
+    }
+    if (totalMass < 1e-9) return;
+    xcm /= totalMass;
+
+    // ── Phase 2: covariance A_pq (stored as 3 column vectors) ──
+    // column c of A_pq equals sum_i (m_i * q_i[c] * p_i)
+    float3 Ac0 = float3(0, 0, 0);
+    float3 Ac1 = float3(0, 0, 0);
+    float3 Ac2 = float3(0, 0, 0);
+    for (uint i2 = 0; i2 < N; i2++)
+    {
+        uint     pIdx = (uint)_RigidParticleIndices[baseIdx + i2];
+        Particle p    = _Particles[pIdx];
+        float    m    = (p.invMass > 0.0) ? 1.0 / p.invMass : 0.0;
+        float3   pRel = p.position - xcm;
+        float3   qRest = _RigidRestOffsets[baseIdx + i2];
+        Ac0 += m * qRest.x * pRel;
+        Ac1 += m * qRest.y * pRel;
+        Ac2 += m * qRest.z * pRel;
+    }
+
+    // ── Phase 3: extract rotation (Müller/Bender 2016, Eq. 7) ──
+    float4 q = rb.quaternion;
+    [unroll]
+    for (int iter = 0; iter < 20; iter++)
+    {
+        float3x3 R = QuatToMatrix(q);
+        // Column vectors of R (HLSL matrix is row-major: R[row][col])
+        float3 r0 = float3(R._m00, R._m10, R._m20);
+        float3 r1 = float3(R._m01, R._m11, R._m21);
+        float3 r2 = float3(R._m02, R._m12, R._m22);
+
+        float3 num   = cross(r0, Ac0) + cross(r1, Ac1) + cross(r2, Ac2);
+        float  den   = abs(dot(r0, Ac0) + dot(r1, Ac1) + dot(r2, Ac2)) + 1e-12;
+        float3 omega = num / den;
+        float  w     = length(omega);
+        if (w < 1e-12) break;
+
+        float3 axis  = omega / w;
+        float  halfW = w * 0.5;
+        float  s     = sin(halfW);
+        float4 dq    = float4(axis * s, cos(halfW));
+        q = normalize(QuatMul(dq, q));
+    }
+
+    _RigidBodies[rigidID].quaternion = q;
+    _RigidBodies[rigidID].xcm        = xcm;
+
+    // ── Phase 4: apply goal positions directly (infinite stiffness) ──
+    float3x3 Rfinal = QuatToMatrix(q);
+    for (uint i3 = 0; i3 < N; i3++)
+    {
+        uint     pIdx = (uint)_RigidParticleIndices[baseIdx + i3];
+        Particle p    = _Particles[pIdx];
+        if (p.invMass == 0.0) continue;
+        float3 qRest = _RigidRestOffsets[baseIdx + i3];
+        p.position = mul(Rfinal, qRest) + xcm;
+        _Particles[pIdx] = p;
     }
 }

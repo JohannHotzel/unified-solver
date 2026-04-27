@@ -22,6 +22,7 @@ Shader "UnifiedSolver/ParticleRenderer"
                 float  invMass;
                 int    phase;
                 float3 color;
+                uint   visible;
             };
 
             StructuredBuffer<Particle> _Particles;
@@ -44,6 +45,15 @@ Shader "UnifiedSolver/ParticleRenderer"
             {
                 v2f o;
                 Particle p = _Particles[instanceID];
+
+                if (p.visible == 0)
+                {
+                    // Collapse to a degenerate clip-space position; rasterizer culls it.
+                    o.pos    = float4(0, 0, 0, 0);
+                    o.normal = float3(0, 1, 0);
+                    o.color  = float3(0, 0, 0);
+                    return o;
+                }
 
                 float3 worldPos = v.vertex.xyz * (_ParticleRadius * 2.0) + p.position;
                 o.pos    = UnityWorldToClipPos(float4(worldPos, 1.0));
@@ -85,6 +95,7 @@ Shader "UnifiedSolver/ParticleRenderer"
                 float  invMass;
                 int    phase;
                 float3 color;
+                uint   visible;
             };
 
             StructuredBuffer<Particle> _Particles;
@@ -95,11 +106,19 @@ Shader "UnifiedSolver/ParticleRenderer"
             v2f vert(appdata_base v, uint instanceID : SV_InstanceID)
             {
                 Particle p = _Particles[instanceID];
+                v2f o;
+                if (p.visible == 0)
+                {
+                    // Hidden particle: no shadow either.
+                    v.vertex = float4(0, 0, 0, 1);
+                    TRANSFER_SHADOW_CASTER_NORMALOFFSET(o)
+                    o.pos = float4(0, 0, 0, 0);
+                    return o;
+                }
                 // DrawMeshInstancedProcedural has no model matrix, so world == object space.
                 // Place world-space position directly into v.vertex and let the standard
                 // shadow caster macros project it.
                 v.vertex = float4(v.vertex.xyz * (_ParticleRadius * 2.0) + p.position, 1.0);
-                v2f o;
                 TRANSFER_SHADOW_CASTER_NORMALOFFSET(o)
                 return o;
             }
